@@ -84,7 +84,8 @@ export default function ReportsScreen() {
     try {
       const { data, error: e } = await supabase.rpc('get_reports_totals');
       if (e) throw e;
-      setTotals(data as ReportTotals);
+      const rawData = Array.isArray(data) ? data[0] : data;
+      setTotals(rawData as ReportTotals);
     } catch {
       setTotals(null);
     } finally {
@@ -106,7 +107,7 @@ export default function ReportsScreen() {
     loadBatches();
   }, [loadTotals, loadBatches]);
 
-  const buildQuery = () => {
+  const buildQuery = useCallback(() => {
     let q = supabase
       .from('attendees')
       .select('*', { count: 'exact' })
@@ -126,7 +127,7 @@ export default function ReportsScreen() {
     if (fromDate) q = q.gte('created_at', new Date(fromDate).toISOString());
     if (toDate) q = q.lte('created_at', new Date(toDate + 'T23:59:59').toISOString());
     return q;
-  };
+  }, [debouncedSearch, categoryFilter, regTypeFilter, foodFilter, paymentFilter, attendanceFilter, batchFilter, fromDate, toDate]);
 
   const fetchPage = useCallback(async () => {
     setLoading(true);
@@ -141,18 +142,7 @@ export default function ReportsScreen() {
       setError('');
     }
     setLoading(false);
-  }, [
-    debouncedSearch,
-    categoryFilter,
-    regTypeFilter,
-    foodFilter,
-    paymentFilter,
-    attendanceFilter,
-    batchFilter,
-    fromDate,
-    toDate,
-    page,
-  ]);
+  }, [buildQuery, page]);
 
   useEffect(() => {
     fetchPage();

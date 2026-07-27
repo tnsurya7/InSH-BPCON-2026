@@ -703,8 +703,8 @@ function EditForm({
       return;
     }
     const trimmedPhone = phone.trim();
-    if (trimmedPhone && !/^(\+91)?[0-9]{10}$/.test(trimmedPhone.replace(/\s/g, ''))) {
-      setFormError('Phone number must be 10 digits, optionally prefixed with +91.');
+    if (trimmedPhone && !/^[0-9]{10}$/.test(trimmedPhone)) {
+      setFormError('Phone number must be exactly 10 digits.');
       return;
     }
 
@@ -801,9 +801,11 @@ function EditForm({
       <div>
         <label className={labelClasses}>Phone Number</label>
         <input
+          type="tel"
           value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="e.g. +919876543210 or 9876543210"
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+          maxLength={10}
+          placeholder="Enter 10-digit number"
           className={inputClasses}
         />
       </div>
