@@ -2,19 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Badge printing ─────────────────────────────────────────── */
+/* ── Badge printing styles ────────── */
 
-@page {
-  size: 4in 6in;
-  margin: 0;
-}
-
-.badge-page {
-  position: relative;
-  width: 4in;
-  height: 6in;
+/* Each A4 sheet holds up to 4 A6 badges arranged in a 2x2 grid */
+.a4-print-sheet {
+  display: grid;
+  grid-template-columns: 105mm 105mm;
+  grid-template-rows: 148.5mm 148.5mm;
+  width: 210mm;
+  height: 297mm;
+  max-width: 210mm;
+  max-height: 297mm;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0;
   overflow: hidden;
   background: white;
+  page-break-after: always;
+  break-after: page;
+}
+
+.a4-print-sheet:last-child {
+  page-break-after: auto;
+  break-after: auto;
+}
+
+/* Individual A6 badge (105mm x 148.5mm) */
+.badge-page {
+  position: relative;
+  width: 105mm;
+  height: 148.5mm;
+  overflow: hidden;
+  background: white;
+  box-sizing: border-box;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+/* Subtle cut guideline on A4 sheets */
+.a4-print-sheet .badge-page {
+  outline: 0.5px dashed rgba(200, 200, 200, 0.7);
+  outline-offset: -0.5px;
+}
+
+.badge-inner-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4in;
+  height: 6in;
+  transform-origin: top left;
 }
 
 .badge-background {
@@ -50,12 +87,19 @@
   height: 100% !important;
 }
 
-/* Screen: hide the print root off-screen, not display:none */
-#badge-print-root {
-  position: fixed;
-  left: -10000px;
-  top: 0;
-  width: 4in;
+@media screen {
+  #badge-print-root,
+  #badge-test-print-root,
+  #spot-sticker-print-root,
+  #spot-sticker-test-print-root,
+  #spot-sticker-direct-print-root,
+  #standard-badge-print-root {
+    position: fixed !important;
+    left: -9999px !important;
+    top: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
 }
 
 @media print {
@@ -63,47 +107,79 @@
   body {
     margin: 0 !important;
     padding: 0 !important;
+    background: white !important;
   }
 
-  body > *:not(#badge-print-root):not(#badge-test-print-root) {
+  body > *:not(#badge-print-root):not(#badge-test-print-root):not(#spot-sticker-print-root):not(#spot-sticker-test-print-root):not(#spot-sticker-direct-print-root):not(#standard-badge-print-root) {
     display: none !important;
   }
 
   #badge-print-root,
-  #badge-test-print-root {
+  #badge-test-print-root,
+  #spot-sticker-print-root,
+  #spot-sticker-test-print-root,
+  #spot-sticker-direct-print-root,
+  #standard-badge-print-root {
     display: block !important;
     position: static !important;
     left: auto !important;
     top: auto !important;
-    width: 4in !important;
+    visibility: visible !important;
+    width: auto !important;
     margin: 0 !important;
+    padding: 0 !important;
   }
 
-  #badge-print-root .badge-page,
-  #badge-test-print-root .badge-page {
+  .a4-print-sheet {
+    display: grid !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  .a4-print-sheet:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .badge-page {
     display: block !important;
     position: relative !important;
-    width: 4in !important;
-    height: 6in !important;
     margin: 0 !important;
     overflow: hidden !important;
-    break-after: page;
-    page-break-after: always;
+    box-sizing: border-box !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
-  #badge-print-root .badge-page:last-child,
-  #badge-test-print-root .badge-page:last-child {
-    break-after: auto;
-    page-break-after: auto;
+  .spot-sticker-page {
+    display: block !important;
+    position: relative !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: always !important;
+    break-after: page !important;
   }
 
-  #badge-print-root .badge-background,
-  #badge-test-print-root .badge-background {
+  .spot-sticker-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .badge-background {
     display: block !important;
     position: absolute !important;
     inset: 0 !important;
-    width: 4in !important;
-    height: 6in !important;
+    width: 100% !important;
+    height: 100% !important;
     object-fit: fill !important;
     print-color-adjust: exact !important;
     -webkit-print-color-adjust: exact !important;

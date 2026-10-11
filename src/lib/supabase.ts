@@ -1,3 +1,14 @@
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = (currentSession as any)?.access_token || localStorage.getItem('sb_session_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {}
+  return headers;
+}
+
 // Custom chainable client builder that translates Supabase JS queries to Express API requests
 class SupabaseQueryBuilder {
   private table: string;
@@ -23,6 +34,12 @@ class SupabaseQueryBuilder {
   }
 
   insert(data: unknown) {
+    this.dataVal = data;
+    this.method = 'insert';
+    return this;
+  }
+
+  upsert(data: unknown, _options?: { onConflict?: string }) {
     this.dataVal = data;
     this.method = 'insert';
     return this;
@@ -100,11 +117,12 @@ class SupabaseQueryBuilder {
     return this;
   }
 
-  async then(onfulfilled?: (value: { data: unknown; error: { message: string } | null; count?: number | null }) => void) {
+  async then(onfulfilled?: (value: { data: any; error: { message: string } | null; count?: number | null }) => any) {
     try {
       const response = await fetch('/api/query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
+        credentials: 'include',
         body: JSON.stringify({
           table: this.table,
           method: this.method,
@@ -152,7 +170,8 @@ class SupabaseRpcBuilder {
     try {
       const response = await fetch('/api/rpc', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
+        credentials: 'include',
         body: JSON.stringify({
           name: this.name,
           args: this.args
@@ -197,6 +216,9 @@ const mockAuth = {
       }
       const data = await response.json();
       currentSession = data.session;
+      if (data.session?.access_token) {
+        try { localStorage.setItem('sb_session_token', data.session.access_token); } catch {}
+      }
       triggerAuthChange('SIGNED_IN', currentSession);
       return { data, error: null };
     } catch (err: unknown) {
@@ -208,6 +230,7 @@ const mockAuth = {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       currentSession = null;
+      try { localStorage.removeItem('sb_session_token'); } catch {}
       triggerAuthChange('SIGNED_OUT', null);
       return { error: null };
     } catch (err: unknown) {
@@ -352,6 +375,7 @@ export type Attendee = {
   phone_number: string | null;
   email: string | null;
   gender: string | null;
+  medical_council_number?: string | null;
   food_preference: string;
   payment_status: string;
   registration_type: string;

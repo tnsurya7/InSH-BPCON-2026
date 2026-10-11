@@ -5,7 +5,7 @@ import DashboardScreen from '@/screens/DashboardScreen';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 
 function AppShell() {
-  const { authState } = useAuth();
+  const { authState, signOut } = useAuth();
 
   if (authState.status === 'loading') {
     return (
@@ -41,12 +41,20 @@ function AppShell() {
             Something went wrong
           </h1>
           <p className="text-sm text-slate-600 mb-6">{authState.error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-lg bg-slate-800 text-white text-sm font-semibold px-5 py-2.5 hover:bg-slate-900"
-          >
-            Retry
-          </button>
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-slate-800 text-white text-sm font-semibold px-5 py-2.5 hover:bg-slate-900 transition"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => signOut()}
+              className="rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold px-5 py-2.5 hover:bg-slate-50 transition"
+            >
+              Sign In Again
+            </button>
+          </div>
         </div>
       </div>
     );

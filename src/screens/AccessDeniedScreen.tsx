@@ -59,7 +59,7 @@ export default function AccessDeniedScreen() {
         <div className="text-center mt-6">
           <div className="inline-flex items-center gap-1.5 text-slate-500 text-xs">
             <ShieldCheck className="w-3.5 h-3.5" />
-            InSH-BPCON 2026
+            MS Registrations
           </div>
         </div>
       </div>

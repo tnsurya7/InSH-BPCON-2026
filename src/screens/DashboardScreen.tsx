@@ -132,9 +132,9 @@ export default function DashboardScreen() {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-white truncate">
-                InSH-BPCON
+                MS Registrations
               </p>
-              <p className="text-[11px] text-slate-400">2026</p>
+              <p className="text-[11px] text-teal-400 font-medium">Conference Portal</p>
             </div>
           </div>
         </div>

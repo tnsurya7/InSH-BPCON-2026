@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import {
@@ -6,6 +6,7 @@ import {
   GENDER_OPTIONS,
   PAYMENT_STATUSES,
   type SpotRegistrationResult,
+  type Attendee,
 } from '@/lib/supabase';
 import {
   UserPlus,
@@ -13,7 +14,17 @@ import {
   AlertCircle,
   CheckCircle2,
   Lock,
+  Printer,
+  Sparkles,
 } from 'lucide-react';
+import SpotStickerBadge from '@/components/SpotStickerBadge';
+import Badge from '@/components/Badge';
+import {
+  loadBadgeLayout,
+  type BadgeLayout,
+  DEFAULT_BADGE_LAYOUT,
+  DEFAULT_SPOT_STICKER_LAYOUT,
+} from '@/lib/badgeLayout';
 
 const FOOD_OPTIONS = ['Vegetarian', 'Non-Vegetarian', 'Not Specified'] as const;
 
@@ -24,6 +35,7 @@ export default function SpotRegistrationScreen() {
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState<string>('');
+  const [medicalCouncilNumber, setMedicalCouncilNumber] = useState('');
   const [foodPreference, setFoodPreference] = useState<string>('');
   const [paymentStatus, setPaymentStatus] = useState<string>('');
   const [phone, setPhone] = useState('');
@@ -31,7 +43,13 @@ export default function SpotRegistrationScreen() {
   const [gender, setGender] = useState('');
   const [formError, setFormError] = useState('');
   const [success, setSuccess] = useState<SpotRegistrationResult | null>(null);
+  const [lastRegisteredAttendee, setLastRegisteredAttendee] = useState<Attendee | null>(null);
+  const [badgeLayout, setBadgeLayout] = useState<BadgeLayout>(DEFAULT_BADGE_LAYOUT);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    loadBadgeLayout().then(setBadgeLayout).catch(() => {});
+  }, []);
 
   // Exhibitor may not be configured
   const [exhibitorConfigured, setExhibitorConfigured] = useState<
@@ -70,6 +88,7 @@ export default function SpotRegistrationScreen() {
   const resetForm = () => {
     setName('');
     setCategory('');
+    setMedicalCouncilNumber('');
     setFoodPreference('');
     setPaymentStatus('');
     setPhone('');
@@ -94,14 +113,6 @@ export default function SpotRegistrationScreen() {
       setFormError('Delegate name is too long (maximum 200 characters).');
       return;
     }
-    if (!category) {
-      setFormError('Please select a category.');
-      return;
-    }
-    if (!foodPreference) {
-      setFormError('Please select a food preference.');
-      return;
-    }
     if (!paymentStatus) {
       setFormError('Please select a payment status.');
       return;
@@ -122,8 +133,12 @@ export default function SpotRegistrationScreen() {
       return;
     }
 
+    const finalCategory = category.trim() || null;
+    const finalFoodPreference = foodPreference || 'Not Specified';
+    const trimmedMedicalCouncil = medicalCouncilNumber.trim();
+
     // Exhibitor config guard
-    if (category === 'Exhibitors' && exhibitorConfigured === false) {
+    if (finalCategory === 'Exhibitors' && exhibitorConfigured === false) {
       setFormError(
         'Exhibitor registration is not yet configured. Please ask an administrator to set the starting registration number in Registration Number Settings.',
       );
@@ -138,12 +153,13 @@ export default function SpotRegistrationScreen() {
     try {
       const { data, error } = await supabase.rpc('create_spot_registration', {
         p_name: trimmedName,
-        p_category: category,
-        p_food_preference: foodPreference,
+        p_category: finalCategory,
+        p_food_preference: finalFoodPreference,
         p_payment_status: paymentStatus,
         p_phone_number: trimmedPhone || null,
         p_email: trimmedEmail ? trimmedEmail.toLowerCase() : null,
         p_gender: gender || null,
+        p_medical_council_number: trimmedMedicalCouncil || null,
         p_idempotency_key: idempotencyKey,
       });
 
@@ -173,6 +189,28 @@ export default function SpotRegistrationScreen() {
       const rawResult = Array.isArray(data) ? data[0] : data;
       const result = rawResult as unknown as { registration_number: string; qr_token: string; attendee_id: string };
       setSuccess(result);
+
+      const newAttendee: Attendee = {
+        id: result.attendee_id,
+        registration_number: result.registration_number,
+        name: trimmedName,
+        category: finalCategory || 'Delegate',
+        food_preference: finalFoodPreference,
+        payment_status: paymentStatus as any,
+        phone_number: trimmedPhone || null,
+        email: trimmedEmail || null,
+        gender: gender || null,
+        medical_council_number: trimmedMedicalCouncil || null,
+        qr_token: result.qr_token,
+        registration_type: 'spot',
+        attendance_status: 'not_checked_in',
+        import_batch_id: null,
+        created_by: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setLastRegisteredAttendee(newAttendee);
+
       resetForm();
       // Audit: log attendee creation (no QR token or PII in details)
       await supabase.rpc('log_audit', {
@@ -182,7 +220,8 @@ export default function SpotRegistrationScreen() {
         p_details: {
           registration_number: result.registration_number,
           name: trimmedName,
-          category,
+          category: finalCategory,
+          medical_council_number: trimmedMedicalCouncil || undefined,
           registration_type: 'spot',
         },
       });
@@ -193,6 +232,91 @@ export default function SpotRegistrationScreen() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handlePrintSticker = async () => {
+    if (!lastRegisteredAttendee) return;
+    const stickerLayout = badgeLayout.spotSticker ?? DEFAULT_SPOT_STICKER_LAYOUT;
+    const container = document.createElement('div');
+    container.id = 'spot-sticker-print-root';
+    document.body.appendChild(container);
+
+    const { createRoot } = await import('react-dom/client');
+    const reactEl = await import('react');
+    const root = createRoot(container);
+    root.render(
+      reactEl.createElement(() => (
+        <div>
+          <style>{`
+            @page {
+              size: ${stickerLayout.width_mm}mm ${stickerLayout.height_mm}mm;
+              margin: 0;
+            }
+          `}</style>
+          <SpotStickerBadge attendee={lastRegisteredAttendee} layout={stickerLayout} />
+        </div>
+      )),
+    );
+    await new Promise((r) => setTimeout(r, 400));
+    const onAfter = () => {
+      window.removeEventListener('afterprint', onAfter);
+      setTimeout(() => {
+        root.unmount();
+        container.remove();
+      }, 200);
+    };
+    window.addEventListener('afterprint', onAfter);
+    window.print();
+  };
+
+  const handlePrintStandard = async () => {
+    if (!lastRegisteredAttendee) return;
+    const activePage = badgeLayout.pageSize ?? DEFAULT_BADGE_LAYOUT.pageSize!;
+    const container = document.createElement('div');
+    container.id = 'standard-badge-print-root';
+    document.body.appendChild(container);
+
+    const { createRoot } = await import('react-dom/client');
+    const reactEl = await import('react');
+    const root = createRoot(container);
+    root.render(
+      reactEl.createElement(() => (
+        <div
+          className="a4-print-sheet"
+          style={{
+            width: `${activePage.width_mm}mm`,
+            height: `${activePage.height_mm}mm`,
+            maxWidth: `${activePage.width_mm}mm`,
+            maxHeight: `${activePage.height_mm}mm`,
+            display: 'grid',
+            gridTemplateColumns: `repeat(${activePage.columns}, ${activePage.badge_width_mm || (activePage.columns === 1 ? activePage.width_mm : 105)}mm)`,
+            gridTemplateRows: `repeat(${activePage.rows}, ${activePage.badge_height_mm || (activePage.rows === 1 ? activePage.height_mm : 148.5)}mm)`,
+            justifyContent: 'center',
+            alignContent: 'center',
+            pageBreakAfter: 'always',
+            breakAfter: 'page',
+          }}
+        >
+          <style>{`
+            @page {
+              size: ${activePage.width_mm}mm ${activePage.height_mm}mm;
+              margin: 0;
+            }
+          `}</style>
+          <Badge attendee={lastRegisteredAttendee} layout={badgeLayout} />
+        </div>
+      )),
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    const onAfter = () => {
+      window.removeEventListener('afterprint', onAfter);
+      setTimeout(() => {
+        root.unmount();
+        container.remove();
+      }, 200);
+    };
+    window.addEventListener('afterprint', onAfter);
+    window.print();
   };
 
   // Scanner role check — RLS + UI both block
@@ -220,39 +344,114 @@ export default function SpotRegistrationScreen() {
           Spot Registration
         </h2>
         <p className="text-sm text-slate-500">
-          Register a new attendee on-site. The registration number is generated
-          automatically based on the selected category.
+          Register a new attendee on-site. Unique spot registration numbers (PMCON-5000+ series) and sticker badges for TVS LP 46 Neo are generated instantly.
         </p>
       </div>
 
-      {success && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-emerald-900 mb-1">
-                Registration Successful
-              </h3>
-              <div className="space-y-1 text-sm text-emerald-800">
-                <p>
-                  <span className="font-medium">Registration Number:</span>{' '}
-                  <span className="font-mono font-bold">
-                    {success.registration_number}
-                  </span>
-                </p>
-                <p>
-                  <span className="font-medium">QR Token:</span>{' '}
-                  <span className="font-mono text-xs">
-                    {success.qr_token.slice(0, 8)}…
-                  </span>
+      {success && lastRegisteredAttendee && (
+        <div className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm space-y-5 animate-in fade-in duration-200">
+          <div className="flex items-start justify-between gap-4 pb-4 border-b border-emerald-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Spot Registration Successful!
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Unique spot delegate registered. Ready for immediate thermal badge printing.
                 </p>
               </div>
-              <button
-                onClick={() => setSuccess(null)}
-                className="mt-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 transition"
-              >
-                Register Another
-              </button>
+            </div>
+            <div className="text-right">
+              <span className="font-mono text-sm font-extrabold px-3 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                {lastRegisteredAttendee.registration_number}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+            {/* Spot Sticker Preview Card */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col items-center">
+              <div className="flex items-center justify-between w-full mb-3">
+                <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+                  TVS LP 46 Neo Sticker Preview
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">
+                  {(badgeLayout.spotSticker ?? DEFAULT_SPOT_STICKER_LAYOUT).width_mm}×
+                  {(badgeLayout.spotSticker ?? DEFAULT_SPOT_STICKER_LAYOUT).height_mm} mm
+                </span>
+              </div>
+              <div className="p-3 bg-white rounded-lg border border-slate-200 shadow-inner flex items-center justify-center">
+                <SpotStickerBadge
+                  attendee={lastRegisteredAttendee}
+                  layout={badgeLayout.spotSticker}
+                  preview
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2 text-center">
+                Pure white background • Centered QR • Bold uppercase text
+              </p>
+            </div>
+
+            {/* Attendee Details & Actions */}
+            <div className="space-y-4">
+              <div className="space-y-2 text-sm text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-xs text-slate-400 block">Delegate Name</span>
+                  <span className="font-bold text-slate-900 text-base">{lastRegisteredAttendee.name}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                  <div>
+                    <span className="text-xs text-slate-400 block">Category</span>
+                    <span className="font-medium text-slate-800">{lastRegisteredAttendee.category}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Food</span>
+                    <span className="font-medium text-slate-800">{lastRegisteredAttendee.food_preference}</span>
+                  </div>
+                </div>
+                {lastRegisteredAttendee.medical_council_number && (
+                  <div className="pt-1 border-t border-slate-200">
+                    <span className="text-xs text-slate-400 block">Medical Council No.</span>
+                    <span className="font-medium text-slate-800">{lastRegisteredAttendee.medical_council_number}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handlePrintSticker}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-black text-white text-sm font-bold px-4 py-3 shadow-md hover:shadow-lg transition"
+                >
+                  <Printer className="w-4 h-4 text-emerald-400" />
+                  Print Sticker Badge (TVS LP 46 Neo)
+                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintStandard}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 transition"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-slate-500" />
+                    Print Standard Badge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSuccess(null);
+                      setLastRegisteredAttendee(null);
+                    }}
+                    className="flex-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-semibold px-3 py-2 transition"
+                  >
+                    + Register Another
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -269,28 +468,42 @@ export default function SpotRegistrationScreen() {
         onSubmit={handleSubmit}
         className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5"
       >
-        <div>
-          <label className={labelClasses}>Delegate Name *</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={submitting}
-            placeholder="Full name"
-            maxLength={200}
-            className={inputClasses}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className={labelClasses}>Delegate Name *</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={submitting}
+              placeholder="Full name"
+              maxLength={200}
+              className={inputClasses}
+            />
+          </div>
+
+          <div>
+            <label className={labelClasses}>Medical Council Number</label>
+            <input
+              value={medicalCouncilNumber}
+              onChange={(e) => setMedicalCouncilNumber(e.target.value)}
+              disabled={submitting}
+              placeholder="e.g. TNMC-12345 or State Reg No."
+              maxLength={100}
+              className={inputClasses}
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelClasses}>Category *</label>
+            <label className={labelClasses}>Category</label>
             <select
               value={category}
               onChange={(e) => handleCategoryChange(e.target.value)}
               disabled={submitting}
               className={inputClasses}
             >
-              <option value="">Select category…</option>
+              <option value="">No Category (Auto PMCON number)…</option>
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -300,14 +513,14 @@ export default function SpotRegistrationScreen() {
           </div>
 
           <div>
-            <label className={labelClasses}>Food Preference *</label>
+            <label className={labelClasses}>Food Preference</label>
             <select
               value={foodPreference}
               onChange={(e) => setFoodPreference(e.target.value)}
               disabled={submitting}
               className={inputClasses}
             >
-              <option value="">Select…</option>
+              <option value="">Select preference (Default: Not Specified)…</option>
               {FOOD_OPTIONS.map((f) => (
                 <option key={f} value={f}>
                   {f}

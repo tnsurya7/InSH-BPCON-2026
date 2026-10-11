@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import {
@@ -22,22 +23,16 @@ import {
   Lock,
   History,
   FileUp,
+  FileText,
+  Sparkles,
 } from 'lucide-react';
 
 const FOOD_OPTIONS = ['Vegetarian', 'Non-Vegetarian', 'Not Specified'] as const;
 
-const REQUIRED_COLS = [
-  'Name',
-  'Category',
-  'Registration Number',
-  'Food Preference',
-  'Payment Status',
-];
-const OPTIONAL_COLS = ['Phone Number', 'Email', 'Gender'];
-
 type ParsedRow = {
   rowNumber: number;
   registration_number: string;
+  is_auto_reg: boolean;
   name: string;
   category: string;
   food_preference: string;
@@ -45,6 +40,7 @@ type ParsedRow = {
   phone_number: string;
   email: string;
   gender: string;
+  medical_council_number: string;
   valid: boolean;
   reason: string;
 };
@@ -83,9 +79,7 @@ export default function ExcelImportScreen() {
   // History state
   const [batches, setBatches] = useState<ImportBatch[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [selectedBatchAttendees, setSelectedBatchAttendees] = useState<
-    Attendee[]
-  >([]);
+  const [selectedBatchAttendees, setSelectedBatchAttendees] = useState<Attendee[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<ImportBatch | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,86 +90,144 @@ export default function ExcelImportScreen() {
     setError('');
     setRows([]);
     setFileName(file.name);
+
     try {
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) {
-        setError('The file does not contain any sheets.');
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      let rawRecords: Record<string, unknown>[] = [];
+
+      if (ext === 'docx') {
+        rawRecords = await parseDocx(file);
+      } else if (ext === 'doc') {
+        rawRecords = await parseDoc(file);
+      } else if (ext === 'txt') {
+        const text = await file.text();
+        rawRecords = parseTextLines(text);
+      } else {
+        // .xlsx, .xls, .csv and others
+        rawRecords = await parseExcelOrCsv(file);
+      }
+
+      if (rawRecords.length === 0) {
+        setError('No readable attendee rows found in the uploaded file.');
         setParsing(false);
         return;
       }
-      const json: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
-        defval: '',
-        raw: false,
-      });
 
-      if (json.length === 0) {
-        setError('The file contains no data rows.');
-        setParsing(false);
-        return;
-      }
-
-      // Normalise column names (trim, case-insensitive match)
-      const colMap = buildColumnMap(json[0]);
-      for (const req of REQUIRED_COLS) {
-        if (!colMap[req]) {
-          setError(
-            `Missing required column: "${req}". Found columns: ${Object.keys(json[0]).join(', ')}`,
-          );
-          setParsing(false);
-          return;
-        }
-      }
-
-      // Fetch existing registration numbers from DB for duplicate check
+      // Fetch existing registration numbers from DB
       const { data: existing } = await supabase
         .from('attendees')
         .select('registration_number');
-      const existingRegNos = new Set(
-        (existing ?? []).map((a) => a.registration_number),
-      );
+      
+      const existingRegNos = new Set<string>();
+      let maxRegNum = 2000;
+      
+      (existing ?? []).forEach((a: { registration_number?: string }) => {
+        const numStr = (a.registration_number || '').trim().toUpperCase();
+        if (numStr) existingRegNos.add(numStr);
+        const match = numStr.match(/(\d+)/g);
+        if (match) {
+          for (const m of match) {
+            const n = parseInt(m, 10);
+            if (n >= 1000 && n < 99999 && n > maxRegNum) {
+              maxRegNum = n;
+            }
+          }
+        }
+      });
 
+      const colMap = buildColumnMap(rawRecords[0]);
       const seenInFile = new Set<string>();
-      const parsed: ParsedRow[] = json.map((raw, idx) => {
-        const rowNumber = idx + 2; // +1 for header, +1 for 1-indexing
-        const regNo = String(raw[colMap['Registration Number']!] ?? '').trim();
-        const name = String(raw[colMap['Name']!] ?? '').trim();
-        const category = String(raw[colMap['Category']!] ?? '').trim();
-        const food = String(raw[colMap['Food Preference']!] ?? '').trim();
-        const payment = String(raw[colMap['Payment Status']!] ?? '').trim();
-        const phone = String(raw[colMap['Phone Number']] ?? '').trim();
-        let email = String(raw[colMap['Email']] ?? '').trim();
-        const gender = String(raw[colMap['Gender']] ?? '').trim();
 
-        // Validate
+      const parsed: ParsedRow[] = rawRecords.map((raw, idx) => {
+        const rowNumber = idx + 1;
+        let name = colMap['Name'] ? String(raw[colMap['Name']] ?? '').trim() : '';
+
+        // If name column wasn't matched, try first available non-empty text value in row
+        if (!name) {
+          for (const val of Object.values(raw)) {
+            const s = String(val ?? '').trim();
+            if (/[a-zA-Z]{2,}/.test(s) && !s.includes('@') && !/^\d+$/.test(s)) {
+              name = s;
+              break;
+            }
+          }
+        }
+
+        // Phone Number
+        let phone = colMap['Phone Number'] ? String(raw[colMap['Phone Number']] ?? '').trim() : '';
+        if (!phone) {
+          for (const val of Object.values(raw)) {
+            const s = String(val ?? '').trim();
+            if (/(?:\+?91[\s-]?)?[6789]\d{9}/.test(s)) {
+              phone = s;
+              break;
+            }
+          }
+        }
+
+        // Registration Number
+        let regNo = colMap['Registration Number'] ? String(raw[colMap['Registration Number']] ?? '').trim() : '';
+        let isAutoReg = false;
+
+        // Auto-generate registration number if missing or empty
+        if (!regNo) {
+          maxRegNum++;
+          regNo = `PMCON-${maxRegNum}`;
+          isAutoReg = true;
+        } else {
+          // If duplicate within file or exists in DB, safely allocate a unique one
+          const upperReg = regNo.toUpperCase();
+          if (seenInFile.has(upperReg) || existingRegNos.has(upperReg)) {
+            maxRegNum++;
+            regNo = `PMCON-${maxRegNum}`;
+            isAutoReg = true;
+          }
+        }
+        seenInFile.add(regNo.toUpperCase());
+
+        // Category (Defaults to 'Delegates')
+        const rawCat = colMap['Category'] ? String(raw[colMap['Category']] ?? '').trim() : '';
+        const category = normalizeCategory(rawCat);
+
+        // Food Preference (Defaults to 'Not Specified')
+        const rawFood = colMap['Food Preference'] ? String(raw[colMap['Food Preference']] ?? '').trim() : '';
+        const food = normalizeFood(rawFood);
+
+        // Payment Status (Defaults to 'Paid')
+        const rawPayment = colMap['Payment Status'] ? String(raw[colMap['Payment Status']] ?? '').trim() : '';
+        const payment = normalizePayment(rawPayment);
+
+        // Email (Optional)
+        let email = colMap['Email'] ? String(raw[colMap['Email']] ?? '').trim() : '';
+        if (email && !email.includes('@')) {
+          email = '';
+        } else if (email) {
+          email = email.toLowerCase();
+        }
+
+        // Gender (Optional)
+        const rawGender = colMap['Gender'] ? String(raw[colMap['Gender']] ?? '').trim() : '';
+        const gender = normalizeGender(rawGender);
+
+        // Medical Council Number (Optional)
+        const councilNo = colMap['Medical Council Number']
+          ? String(raw[colMap['Medical Council Number']] ?? '').trim()
+          : '';
+
+        // Validation rule: As requested by user, only attendee Name is required!
+        // Missing fields (Category, Food, Payment, Reg No, Phone, etc.) are 100% accepted and auto-completed.
+        let valid = true;
         let reason = '';
-        if (!regNo) reason = 'Registration number is required';
-        else if (!name) reason = 'Name is required';
-        else if (!category) reason = 'Category is required';
-        else if (!VALID_CATEGORIES.has(category))
-          reason = `Invalid category: "${category}"`;
-        else if (!food) reason = 'Food preference is required';
-        else if (!VALID_FOOD.has(food))
-          reason = `Invalid food preference: "${food}"`;
-        else if (!payment) reason = 'Payment status is required';
-        else if (!VALID_PAYMENT.has(payment))
-          reason = `Invalid payment status: "${payment}"`;
-        else if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.toLowerCase()))
-          reason = `Invalid email: "${email}"`;
-        else if (gender && !VALID_GENDER.has(gender))
-          reason = `Invalid gender: "${gender}"`;
-        else if (seenInFile.has(regNo.toLowerCase()))
-          reason = `Duplicate registration number within file: ${regNo}`;
-        else if (existingRegNos.has(regNo))
-          reason = `Registration number already in database: ${regNo}`;
 
-        if (!reason) seenInFile.add(regNo.toLowerCase());
-        if (email) email = email.toLowerCase();
+        if (!name) {
+          valid = false;
+          reason = 'Attendee name is missing in row';
+        }
 
         return {
           rowNumber,
           registration_number: regNo,
+          is_auto_reg: isAutoReg,
           name,
           category,
           food_preference: food,
@@ -183,15 +235,25 @@ export default function ExcelImportScreen() {
           phone_number: phone,
           email,
           gender,
-          valid: !reason,
+          medical_council_number: councilNo,
+          valid,
           reason,
         };
       });
 
-      setRows(parsed);
+      // Filter out completely blank lines
+      const nonBlank = parsed.filter((r) => r.name || r.phone_number || !r.is_auto_reg);
+      if (nonBlank.length === 0) {
+        setError('No valid attendee records could be extracted from this file.');
+        setParsing(false);
+        return;
+      }
+
+      setRows(nonBlank);
       setView('preview');
-    } catch {
-      setError('Unable to read the file. Please ensure it is a valid Excel or CSV file.');
+    } catch (err: any) {
+      console.error('File parsing error:', err);
+      setError(`Unable to parse the file: ${err?.message || 'Unsupported format'}. Please try another file.`);
     } finally {
       setParsing(false);
     }
@@ -220,21 +282,10 @@ export default function ExcelImportScreen() {
       'Phone Number': r.phone_number,
       Email: r.email,
       Gender: r.gender,
+      'Medical Council No': r.medical_council_number,
       'Rejection Reason': r.reason,
     }));
     const ws = XLSX.utils.json_to_sheet(exportRows);
-    ws['!cols'] = [
-      { wch: 10 },
-      { wch: 22 },
-      { wch: 28 },
-      { wch: 18 },
-      { wch: 16 },
-      { wch: 16 },
-      { wch: 16 },
-      { wch: 28 },
-      { wch: 18 },
-      { wch: 50 },
-    ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Rejected Rows');
     XLSX.writeFile(wb, `rejected_${fileName.replace(/\.[^.]+$/, '')}.xlsx`);
@@ -243,7 +294,6 @@ export default function ExcelImportScreen() {
   const handleImport = async () => {
     if (importing || validRows.length === 0) return;
 
-    // Idempotency guard: prevent double import
     const importId = `import_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     if (importIdRef.current === importId) return;
     importIdRef.current = importId;
@@ -260,6 +310,7 @@ export default function ExcelImportScreen() {
         phone_number: r.phone_number || null,
         email: r.email || null,
         gender: r.gender || null,
+        medical_council_number: r.medical_council_number || null,
       }));
 
       const { data, error: rpcError } = await supabase.rpc(
@@ -273,11 +324,11 @@ export default function ExcelImportScreen() {
           setError('You do not have permission to import attendees.');
         } else if (msg.includes('duplicate key')) {
           setError(
-            'One or more registration numbers already exist in the database. Please fix the duplicates and try again.',
+            'One or more registration numbers already exist in the database. Please check and try again.',
           );
         } else {
           setError(
-            'Import failed. No attendees were saved. Please check your file and try again.',
+            'Import failed. Please verify your file data and try again.',
           );
         }
         importIdRef.current = null;
@@ -289,24 +340,27 @@ export default function ExcelImportScreen() {
         batchId: res?.batch_id,
         fileName,
         totalRows: rows.length,
-        importedCount: res?.imported_count ?? 0,
+        importedCount: res?.imported_count ?? validRows.length,
         rejectedCount: rejectedRows.length,
         duplicateCount,
       });
       setView('result');
-      // Audit: log Excel import completion
+
+      // Audit log
       await supabase.rpc('log_audit', {
         p_action: 'excel_import',
         p_target_type: 'import_batch',
         p_target_id: res?.batch_id ?? null,
         p_details: {
           file_name: fileName,
-          imported_count: res?.imported_count ?? 0,
-          rejected_count: rejectedRows.length,
+          total_rows: rows.length,
+          imported: res?.imported_count ?? validRows.length,
+          rejected: rejectedRows.length,
         },
       });
-    } catch {
-      setError('A network error occurred during import. Please try again.');
+    } catch (err: any) {
+      console.error('Import failed:', err);
+      setError('An unexpected error occurred during import. Please try again.');
       importIdRef.current = null;
     } finally {
       setImporting(false);
@@ -319,20 +373,23 @@ export default function ExcelImportScreen() {
     const { data } = await supabase
       .from('attendees')
       .select('*')
-      .eq('import_batch_id', result.batchId)
-      .order('registration_number');
-    setImportedAttendees((data ?? []) as Attendee[]);
+      .eq('import_batch_id', result.batchId);
+    setImportedAttendees(data ?? []);
   };
 
   const fetchHistory = async () => {
     setHistoryLoading(true);
-    const { data } = await supabase
-      .from('import_batches')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setBatches((data ?? []) as ImportBatch[]);
-    setHistoryLoading(false);
+    try {
+      const { data } = await supabase
+        .from('import_batches')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setBatches(data ?? []);
+    } catch {
+      // ignore
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const viewBatchAttendees = async (batch: ImportBatch) => {
@@ -340,9 +397,8 @@ export default function ExcelImportScreen() {
     const { data } = await supabase
       .from('attendees')
       .select('*')
-      .eq('import_batch_id', batch.id)
-      .order('registration_number');
-    setSelectedBatchAttendees((data ?? []) as Attendee[]);
+      .eq('import_batch_id', batch.id);
+    setSelectedBatchAttendees(data ?? []);
   };
 
   const resetAll = () => {
@@ -371,8 +427,8 @@ export default function ExcelImportScreen() {
           Access Restricted
         </h2>
         <p className="text-sm text-slate-500 max-w-sm">
-          Scanner accounts cannot access Excel import. This restriction is
-          enforced by both the interface and database security policies.
+          Scanner accounts cannot access bulk import. This restriction is
+          enforced by both the interface and security policies.
         </p>
       </div>
     );
@@ -381,7 +437,7 @@ export default function ExcelImportScreen() {
   const validRows = rows.filter((r) => r.valid);
   const rejectedRows = rows.filter((r) => !r.valid);
   const duplicateCount = rows.filter(
-    (r) => !r.valid && r.reason.includes('Duplicate'),
+    (r) => !r.valid && r.reason.toLowerCase().includes('duplicate'),
   ).length;
 
   // ── Upload view ──
@@ -391,20 +447,29 @@ export default function ExcelImportScreen() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-slate-900 mb-1">
-              Excel Import
+              Bulk Attendee Import
             </h2>
             <p className="text-sm text-slate-500">
-              Upload a spreadsheet of pre-registered attendees. Registration
-              numbers are preserved exactly as in the file.
+              Upload attendee files in Excel, Word (.docx/.doc), CSV, or Text format. Missing fields are automatically completed.
             </p>
           </div>
-          <button
-            onClick={() => setView('history')}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
-          >
-            <History className="w-4 h-4" />
-            Import History
-          </button>
+          <div className="flex items-center gap-2.5">
+            <a
+              href="/mock_attendees_50.xlsx"
+              download="mock_attendees_50.xlsx"
+              className="flex items-center gap-2 rounded-lg bg-teal-50 border border-teal-200 px-3.5 py-2 text-sm font-medium text-teal-800 hover:bg-teal-100 transition shadow-xs"
+            >
+              <Download className="w-4 h-4 text-teal-600" />
+              Download 50 Test Attendees (.xlsx)
+            </a>
+            <button
+              onClick={() => setView('history')}
+              className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
+            >
+              <History className="w-4 h-4" />
+              Import History
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -414,70 +479,91 @@ export default function ExcelImportScreen() {
           </div>
         )}
 
+        {/* Drop Zone */}
         <div
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
-          className="border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center hover:border-teal-500 hover:bg-teal-50/30 transition cursor-pointer"
+          className="border-2 border-dashed border-teal-300 bg-gradient-to-b from-teal-50/20 to-slate-50 rounded-2xl p-10 text-center hover:border-teal-500 hover:bg-teal-50/40 transition cursor-pointer group"
           onClick={() => fileInputRef.current?.click()}
         >
           <input
             ref={fileInputRef}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.docx,.doc,.txt"
             onChange={handleFileSelect}
             className="hidden"
           />
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-100 mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-teal-100 group-hover:bg-teal-200 text-teal-700 mb-4 transition">
             {parsing ? (
               <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
             ) : (
-              <FileUp className="w-8 h-8 text-slate-400" />
+              <FileUp className="w-8 h-8" />
             )}
           </div>
-          <p className="text-sm font-medium text-slate-700 mb-1">
-            {parsing ? 'Reading file…' : 'Drop a file here or click to browse'}
+          <p className="text-base font-semibold text-slate-800 mb-1">
+            {parsing ? 'Reading and extracting attendee data…' : 'Drop attendee file here or click to browse'}
           </p>
-          <p className="text-xs text-slate-400">
-            Supports .xlsx, .xls and .csv files
+          <p className="text-xs text-slate-500 mb-3">
+            Supports <span className="font-semibold text-teal-700">Excel (.xlsx, .xls)</span>, <span className="font-semibold text-blue-700">Word (.docx, .doc)</span>, <span className="font-semibold text-slate-700">CSV (.csv)</span>, and <span className="font-semibold text-slate-700">Text (.txt)</span>
           </p>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+            Forgiving Parser: Even if 1, 2, or 3 fields are missing, details will be auto-completed!
+          </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3">
-            Required Format
+        {/* Guidelines Box */}
+        <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-teal-600" />
+            Smart Auto-Fill & Tolerant Column Rules
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="font-medium text-slate-700 mb-1.5">
-                Required columns
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            <div className="bg-emerald-50/60 border border-emerald-100 rounded-lg p-3">
+              <p className="font-semibold text-emerald-900 mb-1.5">
+                Required Field
               </p>
-              <ul className="space-y-1 text-slate-600">
-                {REQUIRED_COLS.map((c) => (
-                  <li key={c} className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
-                    {c}
-                  </li>
-                ))}
+              <ul className="space-y-1 text-emerald-800">
+                <li className="flex items-center gap-1.5 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  Name / Attendee Name (essential to identify attendee)
+                </li>
               </ul>
             </div>
-            <div>
-              <p className="font-medium text-slate-700 mb-1.5">
-                Optional columns
+
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <p className="font-semibold text-slate-800 mb-1.5">
+                Optional & Auto-Defaulted Fields
               </p>
               <ul className="space-y-1 text-slate-600">
-                {OPTIONAL_COLS.map((c) => (
-                  <li key={c} className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                    {c}
-                  </li>
-                ))}
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  Registration No: <span className="text-slate-500">Auto-generated (PMCON-xxxx) if missing</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  Category: <span className="text-slate-500">Defaults to Delegates</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  Food Preference: <span className="text-slate-500">Defaults to Not Specified</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  Payment Status: <span className="text-slate-500">Defaults to Paid</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  Phone, Email, Gender, Medical Council No: <span className="text-slate-500">Captured if present</span>
+                </li>
               </ul>
             </div>
           </div>
-          <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500">
-            Accepted values — Categories: {CATEGORIES.join(', ')} · Food:{' '}
-            {FOOD_OPTIONS.join(', ')} · Payment: {PAYMENT_STATUSES.join(', ')} ·
-            Gender: {GENDER_OPTIONS.join(', ')}
+
+          <div className="pt-2 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap gap-2">
+            <span>Recognized Categories: <strong className="text-slate-700">{CATEGORIES.join(', ')}</strong></span>
+            <span>· Food: <strong className="text-slate-700">Vegetarian, Non-Vegetarian, Not Specified</strong></span>
           </div>
         </div>
       </div>
@@ -488,54 +574,55 @@ export default function ExcelImportScreen() {
   if (view === 'preview') {
     return (
       <div className="space-y-5">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between">
           <button
             onClick={resetAll}
-            className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 transition"
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Upload
+            Upload Another File
           </button>
+          <span className="text-xs text-slate-400 font-mono">{fileName}</span>
         </div>
 
         <div>
-          <h2 className="text-base font-semibold text-slate-900 mb-1">
-            Preview: {fileName}
+          <h2 className="text-base font-semibold text-slate-900 mb-0.5">
+            File Preview & Data Extraction
           </h2>
           <p className="text-sm text-slate-500">
-            Review the validation results below before confirming the import.
+            Review the extracted attendee details. All valid rows will be saved to your attendee database.
           </p>
         </div>
 
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <SummaryCard
-            label="Total Rows"
+            label="Total Extracted"
             value={rows.length}
             icon={FileSpreadsheet}
             color="text-slate-700"
-            bg="bg-slate-50"
+            bg="bg-slate-100"
           />
           <SummaryCard
-            label="Valid"
+            label="Ready to Import"
             value={validRows.length}
             icon={CheckCircle2}
             color="text-emerald-700"
-            bg="bg-emerald-50"
+            bg="bg-emerald-100"
           />
           <SummaryCard
-            label="Rejected"
+            label="Auto-Generated Reg Nos"
+            value={rows.filter((r) => r.is_auto_reg).length}
+            icon={Sparkles}
+            color="text-teal-700"
+            bg="bg-teal-100"
+          />
+          <SummaryCard
+            label="Rejected Rows"
             value={rejectedRows.length}
             icon={XCircle}
             color="text-red-700"
-            bg="bg-red-50"
-          />
-          <SummaryCard
-            label="Duplicates"
-            value={duplicateCount}
-            icon={AlertCircle}
-            color="text-amber-700"
-            bg="bg-amber-50"
+            bg="bg-red-100"
           />
         </div>
 
@@ -548,49 +635,46 @@ export default function ExcelImportScreen() {
 
         {/* Preview table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+          <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10">
-                <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Row
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Reg. No.
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Name
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Category
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Food
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Payment
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Status
-                  </th>
-                  <th className="px-3 py-2.5 font-semibold text-slate-700">
-                    Reason
-                  </th>
+                <tr className="bg-slate-50 border-b border-slate-200 text-left text-xs uppercase font-semibold text-slate-600">
+                  <th className="px-3 py-2.5">Row</th>
+                  <th className="px-3 py-2.5">Reg. No.</th>
+                  <th className="px-3 py-2.5">Name</th>
+                  <th className="px-3 py-2.5">Phone</th>
+                  <th className="px-3 py-2.5">Category</th>
+                  <th className="px-3 py-2.5">Food</th>
+                  <th className="px-3 py-2.5">Payment</th>
+                  <th className="px-3 py-2.5">Council No</th>
+                  <th className="px-3 py-2.5">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 text-xs">
                 {rows.map((r) => (
                   <tr
                     key={r.rowNumber}
-                    className={r.valid ? '' : 'bg-red-50/40'}
+                    className={r.valid ? 'hover:bg-slate-50/60' : 'bg-red-50/40'}
                   >
                     <td className="px-3 py-2 text-slate-500 tabular-nums">
                       {r.rowNumber}
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-700">
-                      {r.registration_number || '—'}
+                    <td className="px-3 py-2 font-mono font-medium text-slate-800">
+                      <div className="flex items-center gap-1">
+                        <span>{r.registration_number}</span>
+                        {r.is_auto_reg && (
+                          <span className="text-[10px] bg-teal-100 text-teal-800 px-1 py-0.2 rounded font-sans font-semibold">
+                            Auto
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-3 py-2 text-slate-900">{r.name || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-slate-900">
+                      {r.name || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 tabular-nums">
+                      {r.phone_number || '—'}
+                    </td>
                     <td className="px-3 py-2 text-slate-600">
                       {r.category || '—'}
                     </td>
@@ -598,23 +682,25 @@ export default function ExcelImportScreen() {
                       {r.food_preference || '—'}
                     </td>
                     <td className="px-3 py-2 text-slate-600">
-                      {r.payment_status || '—'}
+                      <span className="px-1.5 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700">
+                        {r.payment_status || 'Paid'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {r.medical_council_number || '—'}
                     </td>
                     <td className="px-3 py-2">
                       {r.valid ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 text-xs font-medium">
+                        <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           Valid
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-red-700 text-xs font-medium">
+                        <span className="inline-flex items-center gap-1 text-red-700 font-medium" title={r.reason}>
                           <XCircle className="w-3.5 h-3.5" />
-                          Rejected
+                          {r.reason}
                         </span>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-red-600">
-                      {r.reason || ''}
                     </td>
                   </tr>
                 ))}
@@ -644,13 +730,12 @@ export default function ExcelImportScreen() {
             {importing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Importing…
+                Importing {validRows.length} Attendees…
               </>
             ) : (
               <>
                 <Upload className="w-4 h-4" />
-                Import {validRows.length} Valid Row
-                {validRows.length === 1 ? '' : 's'}
+                Confirm & Import {validRows.length} Attendee{validRows.length === 1 ? '' : 's'}
               </>
             )}
           </button>
@@ -667,15 +752,15 @@ export default function ExcelImportScreen() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-100 mb-4">
             <CheckCircle2 className="w-8 h-8 text-emerald-600" />
           </div>
-          <h2 className="text-lg font-bold text-slate-900 mb-1">
-            Import Complete
+          <h2 className="text-xl font-bold text-slate-900 mb-1">
+            Import Completed Successfully!
           </h2>
           <p className="text-sm text-slate-500 mb-6">{result.fileName}</p>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <ResultStat label="Total Rows" value={result.totalRows} />
+            <ResultStat label="Total Processed" value={result.totalRows} />
             <ResultStat
-              label="Imported"
+              label="Successfully Added"
               value={result.importedCount}
               color="text-emerald-700"
             />
@@ -697,7 +782,7 @@ export default function ExcelImportScreen() {
               className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
             >
               <Eye className="w-4 h-4" />
-              View Imported Attendees
+              View Added Attendees
             </button>
             {rejectedRows.length > 0 && (
               <button
@@ -712,40 +797,36 @@ export default function ExcelImportScreen() {
               onClick={resetAll}
               className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700 text-white text-sm font-semibold px-6 py-2 transition shadow-sm"
             >
-              Finish
+              Finish & Import More
             </button>
           </div>
         </div>
 
         {viewingImported && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-900">
                 Imported Attendees ({importedAttendees.length})
               </h3>
             </div>
             <div className="overflow-x-auto max-h-80 overflow-y-auto">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-slate-50">
+                <thead className="sticky top-0 bg-slate-50 text-xs font-semibold text-slate-600 uppercase">
                   <tr className="text-left border-b border-slate-200">
-                    <th className="px-4 py-2 font-semibold text-slate-700">
-                      Reg. No.
-                    </th>
-                    <th className="px-4 py-2 font-semibold text-slate-700">
-                      Name
-                    </th>
-                    <th className="px-4 py-2 font-semibold text-slate-700">
-                      Category
-                    </th>
+                    <th className="px-4 py-2.5">Reg. No.</th>
+                    <th className="px-4 py-2.5">Name</th>
+                    <th className="px-4 py-2.5">Phone</th>
+                    <th className="px-4 py-2.5">Category</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 text-xs">
                   {importedAttendees.map((a) => (
                     <tr key={a.id}>
-                      <td className="px-4 py-2 font-mono text-xs text-slate-700">
+                      <td className="px-4 py-2 font-mono font-medium text-slate-800">
                         {a.registration_number}
                       </td>
-                      <td className="px-4 py-2 text-slate-900">{a.name}</td>
+                      <td className="px-4 py-2 font-medium text-slate-900">{a.name}</td>
+                      <td className="px-4 py-2 text-slate-600">{a.phone_number || '—'}</td>
                       <td className="px-4 py-2 text-slate-600">{a.category}</td>
                     </tr>
                   ))}
@@ -787,8 +868,8 @@ export default function ExcelImportScreen() {
             Loading history…
           </div>
         ) : batches.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 text-sm">
-            No imports yet.
+          <div className="text-center py-12 text-slate-500 text-sm bg-white rounded-xl border border-slate-200">
+            No bulk imports recorded yet.
           </div>
         ) : (
           <div className="space-y-4">
@@ -796,40 +877,28 @@ export default function ExcelImportScreen() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-left">
-                      <th className="px-4 py-3 font-semibold text-slate-700">
-                        File Name
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">
-                        Date
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">
-                        Rows
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">
-                        Imported
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">
-                        Rejected
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700 text-right">
-                        Actions
-                      </th>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-left text-xs font-semibold text-slate-600 uppercase">
+                      <th className="px-4 py-3">File Name</th>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Rows</th>
+                      <th className="px-4 py-3">Imported</th>
+                      <th className="px-4 py-3">Rejected</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 text-xs">
                     {batches.map((b) => (
                       <tr key={b.id} className="hover:bg-slate-50/70">
                         <td className="px-4 py-3 font-medium text-slate-900">
                           {b.file_name}
                         </td>
-                        <td className="px-4 py-3 text-slate-500 text-xs">
+                        <td className="px-4 py-3 text-slate-500">
                           {new Date(b.created_at).toLocaleString()}
                         </td>
                         <td className="px-4 py-3 text-slate-600 tabular-nums">
                           {b.row_count}
                         </td>
-                        <td className="px-4 py-3 text-emerald-700 font-medium tabular-nums">
+                        <td className="px-4 py-3 text-emerald-700 font-semibold tabular-nums">
                           {b.imported_count}
                         </td>
                         <td className="px-4 py-3 text-red-700 tabular-nums">
@@ -838,10 +907,10 @@ export default function ExcelImportScreen() {
                         <td className="px-4 py-3 text-right">
                           <button
                             onClick={() => viewBatchAttendees(b)}
-                            className="inline-flex items-center gap-1.5 text-sm text-teal-700 hover:text-teal-900 font-medium"
+                            className="inline-flex items-center gap-1.5 text-xs text-teal-700 hover:text-teal-900 font-medium"
                           >
-                            <Eye className="w-4 h-4" />
-                            View
+                            <Eye className="w-3.5 h-3.5" />
+                            View Attendees
                           </button>
                         </td>
                       </tr>
@@ -852,56 +921,40 @@ export default function ExcelImportScreen() {
             </div>
 
             {selectedBatch && (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-4">
+                <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-semibold text-slate-900">
-                    Attendees from "{selectedBatch.file_name}" (
+                    Attendees in Batch: {selectedBatch.file_name} (
                     {selectedBatchAttendees.length})
                   </h3>
                   <button
                     onClick={() => setSelectedBatch(null)}
-                    className="text-sm text-slate-500 hover:text-slate-800"
+                    className="text-xs text-slate-500 hover:text-slate-800"
                   >
                     Close
                   </button>
                 </div>
                 <div className="overflow-x-auto max-h-80 overflow-y-auto">
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-slate-50">
+                    <thead className="sticky top-0 bg-slate-50 text-xs uppercase font-semibold text-slate-600">
                       <tr className="text-left border-b border-slate-200">
-                        <th className="px-4 py-2 font-semibold text-slate-700">
-                          Reg. No.
-                        </th>
-                        <th className="px-4 py-2 font-semibold text-slate-700">
-                          Name
-                        </th>
-                        <th className="px-4 py-2 font-semibold text-slate-700">
-                          Category
-                        </th>
-                        <th className="px-4 py-2 font-semibold text-slate-700">
-                          Food
-                        </th>
-                        <th className="px-4 py-2 font-semibold text-slate-700">
-                          Payment
-                        </th>
+                        <th className="px-4 py-2">Reg. No.</th>
+                        <th className="px-4 py-2">Name</th>
+                        <th className="px-4 py-2">Category</th>
+                        <th className="px-4 py-2">Food</th>
+                        <th className="px-4 py-2">Payment</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 text-xs">
                       {selectedBatchAttendees.map((a) => (
                         <tr key={a.id}>
-                          <td className="px-4 py-2 font-mono text-xs text-slate-700">
+                          <td className="px-4 py-2 font-mono text-slate-800">
                             {a.registration_number}
                           </td>
-                          <td className="px-4 py-2 text-slate-900">{a.name}</td>
-                          <td className="px-4 py-2 text-slate-600">
-                            {a.category}
-                          </td>
-                          <td className="px-4 py-2 text-slate-600">
-                            {a.food_preference}
-                          </td>
-                          <td className="px-4 py-2 text-slate-600">
-                            {a.payment_status}
-                          </td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{a.name}</td>
+                          <td className="px-4 py-2 text-slate-600">{a.category}</td>
+                          <td className="px-4 py-2 text-slate-600">{a.food_preference}</td>
+                          <td className="px-4 py-2 text-slate-600">{a.payment_status}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -918,40 +971,275 @@ export default function ExcelImportScreen() {
   return null;
 }
 
+// ── Multi-Format Parsers ──
+
+async function parseDocx(file: File): Promise<Record<string, unknown>[]> {
+  const arrayBuffer = await file.arrayBuffer();
+  try {
+    const { value: html } = await mammoth.convertToHtml({ arrayBuffer });
+    if (html && html.includes('<table')) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const tables = doc.querySelectorAll('table');
+      const records: Record<string, unknown>[] = [];
+
+      tables.forEach((table) => {
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (rows.length === 0) return;
+
+        const firstRowCells = Array.from(rows[0].querySelectorAll('th, td')).map((c) =>
+          (c.textContent || '').trim(),
+        );
+
+        const hasNamedHeaders = firstRowCells.some((h) =>
+          /name|reg|phone|mobile|category|food|email|status|doctor|student|participant/i.test(h),
+        );
+
+        const startIndex = hasNamedHeaders ? 1 : 0;
+        const headers = hasNamedHeaders
+          ? firstRowCells
+          : firstRowCells.map((_, i) => `Column_${i + 1}`);
+
+        for (let i = startIndex; i < rows.length; i++) {
+          const cells = Array.from(rows[i].querySelectorAll('td, th')).map((c) =>
+            (c.textContent || '').trim(),
+          );
+          if (cells.every((c) => !c)) continue;
+
+          const record: Record<string, unknown> = {};
+          cells.forEach((val, colIdx) => {
+            const h = headers[colIdx] || `Column_${colIdx + 1}`;
+            record[h] = val;
+          });
+          records.push(record);
+        }
+      });
+
+      if (records.length > 0) return records;
+    }
+  } catch (e) {
+    console.warn('Docx HTML parse failed, falling back to raw text', e);
+  }
+
+  const { value: rawText } = await mammoth.extractRawText({ arrayBuffer });
+  return parseTextLines(rawText);
+}
+
+async function parseDoc(file: File): Promise<Record<string, unknown>[]> {
+  try {
+    const text = await file.text();
+    if (text && !text.includes('\x00\x00\x00')) {
+      return parseTextLines(text);
+    }
+  } catch {}
+
+  // Binary doc: scan for printable strings
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let asciiStr = '';
+  let inWord = '';
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b >= 32 && b <= 126) {
+      inWord += String.fromCharCode(b);
+    } else if (b === 10 || b === 13) {
+      if (inWord.length >= 3) {
+        asciiStr += inWord + '\n';
+      }
+      inWord = '';
+    } else {
+      if (inWord.length >= 3) {
+        asciiStr += inWord + '\n';
+      }
+      inWord = '';
+    }
+  }
+  return parseTextLines(asciiStr);
+}
+
+async function parseExcelOrCsv(file: File): Promise<Record<string, unknown>[]> {
+  const data = await file.arrayBuffer();
+  const wb = XLSX.read(data, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  if (!sheet) return [];
+  return XLSX.utils.sheet_to_json(sheet, {
+    defval: '',
+    raw: false,
+  });
+}
+
+function parseTextLines(text: string): Record<string, unknown>[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  if (lines.length === 0) return [];
+
+  const firstLine = lines[0];
+  let delimiter = ',';
+  if (firstLine.includes('\t')) delimiter = '\t';
+  else if (firstLine.includes('|')) delimiter = '|';
+  else if (firstLine.includes(';') && !firstLine.includes(',')) delimiter = ';';
+
+  const firstParts = firstLine.split(delimiter).map((p) => p.trim());
+  const isHeader = firstParts.some((h) =>
+    /name|reg|phone|mobile|category|food|email|status|doctor|student|participant/i.test(h),
+  );
+
+  const startIndex = isHeader ? 1 : 0;
+  const headers = isHeader
+    ? firstParts
+    : firstParts.map((_, i) => `Column_${i + 1}`);
+
+  const records: Record<string, unknown>[] = [];
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+
+    if (line.includes(delimiter)) {
+      const parts = line.split(delimiter).map((p) => p.trim());
+      const rec: Record<string, unknown> = {};
+      parts.forEach((val, colIdx) => {
+        const h = headers[colIdx] || `Column_${colIdx + 1}`;
+        rec[h] = val;
+      });
+      records.push(rec);
+    } else {
+      // Freeform single line: look for phone number and name
+      const phoneMatch = line.match(/(?:\+?91[\s-]?)?[6789]\d{9}/);
+      let name = line;
+      let phone = '';
+      if (phoneMatch) {
+        phone = phoneMatch[0];
+        name = line.replace(phone, '').replace(/^[\s\-_:,.]+|[\s\-_:,.]+$/g, '').trim();
+      }
+      records.push({
+        Name: name,
+        'Phone Number': phone,
+      });
+    }
+  }
+
+  return records;
+}
+
 // ── Helpers ──
 
 function buildColumnMap(
   row: Record<string, unknown>,
 ): Record<string, string> {
   const map: Record<string, string> = {};
-  for (const key of Object.keys(row)) {
-    const normalised = key.trim().toLowerCase();
-    if (normalised === 'name') map['Name'] = key;
-    else if (normalised === 'category') map['Category'] = key;
-    else if (
-      normalised === 'registration number' ||
-      normalised === 'registration_number' ||
-      normalised === 'reg number' ||
-      normalised === 'reg no' ||
-      normalised === 'registration no'
-    )
-      map['Registration Number'] = key;
-    else if (
-      normalised === 'food preference' ||
-      normalised === 'food_preference'
-    )
-      map['Food Preference'] = key;
-    else if (
-      normalised === 'payment status' ||
-      normalised === 'payment_status'
-    )
-      map['Payment Status'] = key;
-    else if (normalised === 'phone number' || normalised === 'phone_number')
+  if (!row) return map;
+  const keys = Object.keys(row);
+
+  for (const key of keys) {
+    const norm = key.trim().toLowerCase().replace(/[_\s]+/g, ' ');
+
+    if (
+      /^(name|full name|attendee name|participant name|participant|doctor name|dr name|delegate name|student name|candidate name|delegate|doctor)$/i.test(
+        norm,
+      )
+    ) {
+      map['Name'] = key;
+    } else if (
+      /name/i.test(norm) &&
+      !/council|college|hospital|institute|file|state/i.test(norm) &&
+      !map['Name']
+    ) {
+      map['Name'] = key;
+    } else if (
+      /^(phone|phone no|phone number|mobile|mobile no|mobile number|contact|contact no|contact number|cell|whatsapp|tel|number)$/i.test(
+        norm,
+      )
+    ) {
       map['Phone Number'] = key;
-    else if (normalised === 'email') map['Email'] = key;
-    else if (normalised === 'gender') map['Gender'] = key;
+    } else if (/mobile|phone|contact/i.test(norm) && !map['Phone Number']) {
+      map['Phone Number'] = key;
+    } else if (
+      /^(reg|reg no|reg number|registration|registration no|registration number|regid|attendee id|badge no|id|s no|sl no|serial no)$/i.test(
+        norm,
+      )
+    ) {
+      map['Registration Number'] = key;
+    } else if (/^(category|cat|designation|attendee type|role|type)$/i.test(norm)) {
+      map['Category'] = key;
+    } else if (/^(food|food pref|food preference|diet|meal|lunch|veg)$/i.test(norm)) {
+      map['Food Preference'] = key;
+    } else if (/^(payment|payment status|paid|fee|fees|status)$/i.test(norm)) {
+      map['Payment Status'] = key;
+    } else if (/^(email|e-mail|mail|email id|email address)$/i.test(norm)) {
+      map['Email'] = key;
+    } else if (/^(gender|sex)$/i.test(norm)) {
+      map['Gender'] = key;
+    } else if (/council|kmc|tnmcn|mci|medical council/i.test(norm)) {
+      map['Medical Council Number'] = key;
+    }
   }
+
+  // Fallback: If no column named 'Name' matched, check which column has personal names
+  if (!map['Name']) {
+    for (const key of keys) {
+      const val = String(row[key] ?? '').trim();
+      if (/[a-zA-Z]{2,}/.test(val) && !val.includes('@') && !/^\d+$/.test(val)) {
+        map['Name'] = key;
+        break;
+      }
+    }
+  }
+
   return map;
+}
+
+function normalizeCategory(rawCat: string): string {
+  if (!rawCat) return 'Delegates';
+  const c = rawCat.toLowerCase().trim();
+  if (c.includes('faculty')) return 'Faculty';
+  if (c.includes('post') || c.includes('pg')) return 'Post Graduates';
+  if (c.includes('under') || c.includes('ug') || c.includes('student')) return 'Under Graduates';
+  if (c.includes('exhibit') || c.includes('trade') || c.includes('sponsor')) return 'Exhibitors';
+  if (VALID_CATEGORIES.has(rawCat)) return rawCat;
+  return 'Delegates';
+}
+
+function normalizeFood(rawFood: string): string {
+  if (!rawFood) return 'Not Specified';
+  const f = rawFood.toLowerCase().trim();
+  if (f.includes('non')) return 'Non-Vegetarian';
+  if (f.includes('veg')) return 'Vegetarian';
+  if (VALID_FOOD.has(rawFood)) return rawFood;
+  return 'Not Specified';
+}
+
+function normalizePayment(rawPay: string): string {
+  if (!rawPay) return 'Paid';
+  const p = rawPay.toLowerCase().trim();
+  if (
+    p.includes('pending') ||
+    p.includes('unpaid') ||
+    p.includes('not paid') ||
+    p.includes('due')
+  ) {
+    return 'Pending';
+  }
+  if (
+    p.includes('complimentary') ||
+    p.includes('free') ||
+    p.includes('comp')
+  ) {
+    return 'Complimentary';
+  }
+  if (VALID_PAYMENT.has(rawPay)) return rawPay;
+  return 'Paid';
+}
+
+function normalizeGender(rawGender: string): string {
+  if (!rawGender) return '';
+  const g = rawGender.toLowerCase().trim();
+  if (g === 'm' || g === 'male') return 'Male';
+  if (g === 'f' || g === 'female') return 'Female';
+  if (g === 'other' || g === 'o') return 'Other';
+  return VALID_GENDER.has(rawGender) ? rawGender : '';
 }
 
 function SummaryCard({
@@ -968,7 +1256,7 @@ function SummaryCard({
   bg: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4">
+    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
       <div
         className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center mb-2`}
       >

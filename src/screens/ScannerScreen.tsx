@@ -177,17 +177,17 @@ export default function ScannerScreen() {
     setResult(null);
   }, [mode]);
 
-  const handleManualLookup = async () => {
-    const regNo = manualRegNo.trim();
-    if (!regNo || manualSearching) return;
+  const [searchedAttendee, setSearchedAttendee] = useState<any | null>(null);
 
+  const handleAction = async (regNo: string, action: ScanMode) => {
+    if (!regNo.trim() || manualSearching) return;
     setManualSearching(true);
     setResult(null);
 
     try {
       const { data, error } = await supabase.rpc('process_scan_by_reg_no', {
-        p_registration_number: regNo,
-        p_action: mode,
+        p_registration_number: regNo.trim(),
+        p_action: action,
         p_device_info: navigator.userAgent.slice(0, 200),
         p_session_id: null,
       });
@@ -201,8 +201,8 @@ export default function ScannerScreen() {
       }
 
       const r = Array.isArray(data) ? data[0] : data;
-      if (!r) {
-        setResult({ type: 'invalid', message: 'Invalid QR code' });
+      if (!r || r.result === 'invalid_qr') {
+        setResult({ type: 'invalid', message: 'Attendee not found or invalid registration number' });
         return;
       }
 
@@ -218,6 +218,11 @@ export default function ScannerScreen() {
         category: r.category,
         status: r.attendance_status,
       });
+
+      // Update searched attendee status if present
+      if (searchedAttendee && searchedAttendee.registration_number === r.registration_number) {
+        setSearchedAttendee({ ...searchedAttendee, attendance_status: r.attendance_status });
+      }
     } catch {
       setResult({
         type: 'error',
@@ -226,6 +231,43 @@ export default function ScannerScreen() {
     } finally {
       setManualSearching(false);
     }
+  };
+
+  const handleSearchAttendee = async () => {
+    const regNo = manualRegNo.trim();
+    if (!regNo || manualSearching) return;
+
+    setManualSearching(true);
+    setResult(null);
+    setSearchedAttendee(null);
+
+    try {
+      const { data } = await supabase
+        .from('attendees')
+        .select('*')
+        .or(`registration_number.ilike.%${regNo}%,qr_token.ilike.%${regNo}%`)
+        .maybeSingle();
+
+      if (data) {
+        setSearchedAttendee(data);
+      } else {
+        setResult({
+          type: 'invalid',
+          message: `No attendee found matching registration number "${regNo}"`,
+        });
+      }
+    } catch {
+      setResult({
+        type: 'error',
+        message: 'Error searching for attendee',
+      });
+    } finally {
+      setManualSearching(false);
+    }
+  };
+
+  const handleManualLookup = () => {
+    handleAction(manualRegNo, mode);
   };
 
   // Scanner role should only access scanner — but admin also has access
@@ -392,41 +434,133 @@ export default function ScannerScreen() {
       </div>
 
       {/* Manual lookup section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Keyboard className="w-4 h-4 text-slate-500" />
           <h3 className="text-sm font-semibold text-slate-900">
-            Manual Registration Number Lookup
+            Manual Registration Number Lookup &amp; Check-In
           </h3>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
               value={manualRegNo}
               onChange={(e) => setManualRegNo(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleManualLookup()}
-              placeholder="Enter registration number e.g. BPCON2026-0350"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSearchAttendee();
+              }}
+              placeholder="Enter reg number e.g. PMCON-5002, PMCON-2004"
               className={inputClasses + ' pl-10'}
               disabled={manualSearching}
             />
           </div>
-          <button
-            onClick={handleManualLookup}
-            disabled={manualSearching || !manualRegNo.trim()}
-            className="flex items-center justify-center gap-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-50"
-          >
-            {manualSearching ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Search className="w-4 h-4" />
-            )}
-            Look Up
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSearchAttendee}
+              disabled={manualSearching || !manualRegNo.trim()}
+              className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-medium px-4 py-2.5 disabled:opacity-50 transition"
+              title="Search attendee details"
+            >
+              {manualSearching ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4" />
+              )}
+              Search
+            </button>
+            <button
+              onClick={() => handleAction(manualRegNo, mode)}
+              disabled={manualSearching || !manualRegNo.trim()}
+              className={`flex items-center justify-center gap-2 rounded-lg text-white text-sm font-semibold px-4 py-2.5 disabled:opacity-50 transition ${
+                mode === 'check_in'
+                  ? 'bg-emerald-600 hover:bg-emerald-700'
+                  : 'bg-amber-600 hover:bg-amber-700'
+              }`}
+            >
+              {mode === 'check_in' ? (
+                <>
+                  <LogIn className="w-4 h-4" />
+                  Check In
+                </>
+              ) : (
+                <>
+                  <LogOut className="w-4 h-4" />
+                  Check Out
+                </>
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Searched Attendee Card */}
+        {searchedAttendee && (
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/80 space-y-3 animate-in fade-in duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <span className="font-mono text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+                  {searchedAttendee.registration_number}
+                </span>
+                <h4 className="text-base font-bold text-slate-900 mt-1">
+                  {searchedAttendee.name}
+                </h4>
+                <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
+                  <span>{searchedAttendee.category}</span>
+                  {searchedAttendee.medical_council_number && (
+                    <>
+                      <span>•</span>
+                      <span>Council: {searchedAttendee.medical_council_number}</span>
+                    </>
+                  )}
+                  <span>•</span>
+                  <span>Food: {searchedAttendee.food_preference}</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <span
+                  className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full ${
+                    searchedAttendee.attendance_status === 'checked_in'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : searchedAttendee.attendance_status === 'checked_out'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {searchedAttendee.attendance_status === 'checked_in'
+                    ? 'Checked In'
+                    : searchedAttendee.attendance_status === 'checked_out'
+                      ? 'Checked Out'
+                      : 'Not Checked In'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60">
+              <button
+                onClick={() => handleAction(searchedAttendee.registration_number, 'check_in')}
+                disabled={manualSearching || searchedAttendee.attendance_status === 'checked_in'}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold disabled:opacity-50 transition"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                {searchedAttendee.attendance_status === 'checked_in'
+                  ? 'Already Checked In'
+                  : 'Check In Attendee'}
+              </button>
+              <button
+                onClick={() => handleAction(searchedAttendee.registration_number, 'check_out')}
+                disabled={manualSearching || searchedAttendee.attendance_status === 'checked_out'}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold disabled:opacity-50 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Check Out Attendee
+              </button>
+            </div>
+          </div>
+        )}
+
         <p className="text-xs text-slate-400">
-          Fallback when the camera is unavailable or the QR code is damaged.
+          Enter any registration number to search details and check in/out, or scan badge QR with camera above.
         </p>
       </div>
     </div>

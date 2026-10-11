@@ -21,6 +21,7 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
+  CheckSquare,
 } from 'lucide-react';
 
 const PAGE_SIZE = 20;
@@ -46,7 +47,7 @@ export default function AttendeesScreen() {
   const { authState } = useAuth();
   const role =
     authState.status === 'authenticated' ? authState.profile.role : 'scanner';
-  const isAdmin = role === 'admin';
+  const canManage = role === 'admin' || role === 'staff';
 
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,6 +64,9 @@ export default function AttendeesScreen() {
   const [viewAttendee, setViewAttendee] = useState<Attendee | null>(null);
   const [editAttendee, setEditAttendee] = useState<Attendee | null>(null);
   const [deleteAttendee, setDeleteAttendee] = useState<Attendee | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
   const [saving, setSaving] = useState(false);
@@ -86,7 +90,7 @@ export default function AttendeesScreen() {
 
     if (debouncedSearch) {
       query = query.or(
-        `name.ilike.%${debouncedSearch}%,registration_number.ilike.%${debouncedSearch}%,phone_number.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%`,
+        `name.ilike.%${debouncedSearch}%,registration_number.ilike.%${debouncedSearch}%,phone_number.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%,medical_council_number.ilike.%${debouncedSearch}%`,
       );
     }
     if (categoryFilter !== 'all')
@@ -152,7 +156,7 @@ export default function AttendeesScreen() {
 
       if (debouncedSearch) {
         query = query.or(
-          `name.ilike.%${debouncedSearch}%,registration_number.ilike.%${debouncedSearch}%,phone_number.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%`,
+          `name.ilike.%${debouncedSearch}%,registration_number.ilike.%${debouncedSearch}%,phone_number.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%,medical_council_number.ilike.%${debouncedSearch}%`,
         );
       }
       if (categoryFilter !== 'all')
@@ -188,6 +192,8 @@ export default function AttendeesScreen() {
         patch.payment_status = updated.payment_status;
       if (updated.phone_number !== undefined)
         patch.phone_number = updated.phone_number?.trim() || null;
+      if (updated.medical_council_number !== undefined)
+        patch.medical_council_number = updated.medical_council_number?.trim() || null;
       if (updated.email !== undefined)
         patch.email = updated.email?.trim().toLowerCase() || null;
       if (updated.gender !== undefined)
@@ -221,6 +227,15 @@ export default function AttendeesScreen() {
     setSaving(true);
     setActionError('');
     try {
+      try {
+        await supabase
+          .from('scan_logs')
+          .delete()
+          .eq('attendee_id', deleteAttendee.id);
+      } catch {
+        // scan_logs cleanup if exists
+      }
+
       const { error } = await supabase
         .from('attendees')
         .delete()
@@ -241,6 +256,123 @@ export default function AttendeesScreen() {
       setTimeout(() => setActionSuccess(''), 3000);
     } catch {
       setActionError('Unable to delete attendee. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const allCurrentPageSelected =
+    attendees.length > 0 && attendees.every((a) => selectedIds.has(a.id));
+  const someCurrentPageSelected =
+    attendees.some((a) => selectedIds.has(a.id)) && !allCurrentPageSelected;
+
+  const toggleSelectAllCurrentPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allCurrentPageSelected) {
+        attendees.forEach((a) => next.delete(a.id));
+      } else {
+        attendees.forEach((a) => next.add(a.id));
+      }
+      return next;
+    });
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setSaving(true);
+    setActionError('');
+    try {
+      const idsArray = Array.from(selectedIds);
+      try {
+        await supabase.from('scan_logs').delete().in('attendee_id', idsArray);
+      } catch {}
+
+      const { error } = await supabase
+        .from('attendees')
+        .delete()
+        .in('id', idsArray);
+
+      if (error) throw error;
+
+      setActionSuccess(`Successfully deleted ${idsArray.length} attendee${idsArray.length === 1 ? '' : 's'}.`);
+      setSelectedIds(new Set());
+      setShowBulkDeleteModal(false);
+      fetchAttendees();
+
+      await supabase.rpc('log_audit', {
+        p_action: 'bulk_attendees_deleted',
+        p_target_type: 'attendees',
+        p_target_id: null,
+        p_details: { count: idsArray.length },
+      });
+      setTimeout(() => setActionSuccess(''), 3000);
+    } catch {
+      setActionError('Unable to delete selected attendees. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setSaving(true);
+    setActionError('');
+    try {
+      let query = supabase.from('attendees').select('id');
+      if (debouncedSearch) {
+        query = query.or(
+          `name.ilike.%${debouncedSearch}%,registration_number.ilike.%${debouncedSearch}%,phone_number.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%,medical_council_number.ilike.%${debouncedSearch}%`,
+        );
+      }
+      if (categoryFilter !== 'all') query = query.eq('category', categoryFilter);
+      if (regTypeFilter !== 'all') query = query.eq('registration_type', regTypeFilter);
+      if (attendanceFilter !== 'all') query = query.eq('attendance_status', attendanceFilter);
+      if (paymentFilter !== 'all') query = query.eq('payment_status', paymentFilter);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      const allIds = (data ?? []).map((a: { id: string }) => a.id);
+
+      if (allIds.length > 0) {
+        try {
+          await supabase.from('scan_logs').delete().in('attendee_id', allIds);
+        } catch {}
+
+        const { error: delError } = await supabase
+          .from('attendees')
+          .delete()
+          .in('id', allIds);
+        if (delError) throw delError;
+      }
+
+      setActionSuccess(`Successfully deleted all ${allIds.length} attendees.`);
+      setSelectedIds(new Set());
+      setShowDeleteAllModal(false);
+      setPage(0);
+      fetchAttendees();
+
+      await supabase.rpc('log_audit', {
+        p_action: 'delete_all_attendees',
+        p_target_type: 'attendees',
+        p_target_id: null,
+        p_details: { count: allIds.length },
+      });
+      setTimeout(() => setActionSuccess(''), 3000);
+    } catch {
+      setActionError('Failed to delete all attendees. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -368,12 +500,79 @@ export default function AttendeesScreen() {
         )}
       </div>
 
+      {/* Bulk actions toolbar */}
+      {canManage && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+              <CheckSquare className="w-4 h-4 text-teal-600" />
+              {selectedIds.size > 0 ? (
+                <>
+                  <span className="text-teal-700 font-bold">{selectedIds.size}</span> selected
+                </>
+              ) : (
+                'Selection'
+              )}
+            </span>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={deselectAll}
+                className="text-xs text-slate-500 hover:text-slate-800 underline transition"
+              >
+                Clear Selection
+              </button>
+            )}
+            <button
+              onClick={toggleSelectAllCurrentPage}
+              className="text-xs text-teal-700 hover:text-teal-900 font-medium transition"
+            >
+              {allCurrentPageSelected ? 'Deselect Page' : `Select All on Page (${attendees.length})`}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={() => setShowBulkDeleteModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3.5 py-2 transition shadow-xs active:scale-[0.98]"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected ({selectedIds.size})
+              </button>
+            )}
+            {count > 0 && (
+              <button
+                onClick={() => setShowDeleteAllModal(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium px-3 py-2 transition"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                Delete All {hasActiveFilters ? `Filtered (${count})` : `(${count})`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-left">
+                {canManage && (
+                  <th className="w-10 px-3 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={allCurrentPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someCurrentPageSelected;
+                      }}
+                      onChange={toggleSelectAllCurrentPage}
+                      className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 w-4 h-4 cursor-pointer"
+                      title={allCurrentPageSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3 font-semibold text-slate-700">
                   Reg. No.
                 </th>
@@ -415,7 +614,7 @@ export default function AttendeesScreen() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center">
+                  <td colSpan={canManage ? 13 : 12} className="px-4 py-12 text-center">
                     <div className="flex items-center justify-center gap-2 text-slate-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Loading attendees…
@@ -424,86 +623,103 @@ export default function AttendeesScreen() {
                 </tr>
               ) : attendees.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={canManage ? 13 : 12} className="px-4 py-12 text-center text-slate-500">
                     No attendees found.
                   </td>
                 </tr>
               ) : (
-                attendees.map((a) => (
-                  <tr
-                    key={a.id}
-                    className="hover:bg-slate-50/70 transition-colors"
-                  >
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">
-                      {a.registration_number}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">
-                      {a.name}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.category}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.phone_number ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.email ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.gender ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.food_preference}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.payment_status}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {a.registration_type === 'spot' ? 'Spot' : 'Pre'}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                          ATTENDANCE_BADGE[a.attendance_status] ??
-                          'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {ATTENDANCE_LABELS[a.attendance_status] ??
-                          a.attendance_status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
-                      {new Date(a.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setViewAttendee(a)}
-                          title="View"
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 transition"
+                attendees.map((a) => {
+                  const isSelected = selectedIds.has(a.id);
+                  return (
+                    <tr
+                      key={a.id}
+                      className={
+                        isSelected
+                          ? 'bg-teal-50/70 hover:bg-teal-50 transition-colors'
+                          : 'hover:bg-slate-50/70 transition-colors'
+                      }
+                    >
+                      {canManage && (
+                        <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(a.id)}
+                            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 w-4 h-4 cursor-pointer"
+                          />
+                        </td>
+                      )}
+                      <td className="px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">
+                        {a.registration_number}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">
+                        {a.name}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.category}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.phone_number ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.email ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.gender ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.food_preference}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.payment_status}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                        {a.registration_type === 'spot' ? 'Spot' : 'Pre'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            ATTENDANCE_BADGE[a.attendance_status] ??
+                            'bg-slate-100 text-slate-700'
+                          }`}
                         >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setEditAttendee(a)}
-                          title="Edit"
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 transition"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        {isAdmin && (
+                          {ATTENDANCE_LABELS[a.attendance_status] ??
+                            a.attendance_status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
+                        {new Date(a.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => setDeleteAttendee(a)}
-                            title="Delete"
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-red-700 hover:bg-red-50 transition"
+                            onClick={() => setViewAttendee(a)}
+                            title="View"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 transition"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Eye className="w-4 h-4" />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          <button
+                            onClick={() => setEditAttendee(a)}
+                            title="Edit"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 transition"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          {canManage && (
+                            <button
+                              onClick={() => setDeleteAttendee(a)}
+                              title="Delete"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-red-700 hover:bg-red-50 transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -567,7 +783,7 @@ export default function AttendeesScreen() {
         )}
       </Modal>
 
-      {/* Delete confirmation */}
+      {/* Single delete confirmation */}
       <Modal
         open={!!deleteAttendee}
         onClose={() => setDeleteAttendee(null)}
@@ -608,6 +824,80 @@ export default function AttendeesScreen() {
           </div>
         )}
       </Modal>
+
+      {/* Bulk delete selected modal */}
+      <Modal
+        open={showBulkDeleteModal}
+        onClose={() => setShowBulkDeleteModal(false)}
+        title={`Delete ${selectedIds.size} Selected Attendees`}
+        maxWidth="max-w-md"
+      >
+        <div>
+          <p className="text-sm text-slate-600 mb-3">
+            Are you sure you want to permanently delete{' '}
+            <strong className="text-slate-900">{selectedIds.size}</strong> selected attendees?
+            This will remove their attendee profiles and associated records permanently. This action cannot be undone.
+          </p>
+
+          <div className="rounded-lg bg-red-50 border border-red-200 p-3 mb-5 text-xs text-red-800">
+            Warning: All selected attendees and their QR badge access will be permanently deleted.
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setShowBulkDeleteModal(false)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={saving}
+              className="flex items-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 transition disabled:opacity-60 shadow-sm"
+            >
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+              Yes, Delete {selectedIds.size} Attendees
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete all attendees modal */}
+      <Modal
+        open={showDeleteAllModal}
+        onClose={() => setShowDeleteAllModal(false)}
+        title={`Delete All ${hasActiveFilters ? `Filtered (${count})` : `(${count})`} Attendees`}
+        maxWidth="max-w-md"
+      >
+        <div>
+          <p className="text-sm text-slate-600 mb-3">
+            Are you sure you want to permanently delete all{' '}
+            <strong className="text-red-600 font-bold">{count}</strong> attendees{' '}
+            {hasActiveFilters ? 'matching your current search and filters' : 'in the database'}?
+          </p>
+
+          <div className="rounded-lg bg-red-100 border border-red-300 p-3 mb-5 text-xs text-red-900 font-medium">
+            CAUTION: This will delete all {count} attendees. This action is irreversible.
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setShowDeleteAllModal(false)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDeleteAll}
+              disabled={saving}
+              className="flex items-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 transition disabled:opacity-60 shadow-sm"
+            >
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+              Delete All {count} Attendees
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -618,6 +908,7 @@ function ViewDetails({ attendee }: { attendee: Attendee }) {
       { label: 'Registration Number', value: attendee.registration_number },
       { label: 'Delegate Name', value: attendee.name },
       { label: 'Category', value: attendee.category },
+      { label: 'Medical Council Number', value: attendee.medical_council_number ?? '—' },
       { label: 'Phone Number', value: attendee.phone_number ?? '—' },
       { label: 'Email', value: attendee.email ?? '—' },
       { label: 'Gender', value: attendee.gender ?? '—' },
@@ -673,6 +964,7 @@ function EditForm({
 }) {
   const [name, setName] = useState(attendee.name);
   const [category, setCategory] = useState(attendee.category);
+  const [medicalCouncilNumber, setMedicalCouncilNumber] = useState(attendee.medical_council_number ?? '');
   const [foodPreference, setFoodPreference] = useState(attendee.food_preference);
   const [paymentStatus, setPaymentStatus] = useState(attendee.payment_status);
   const [phone, setPhone] = useState(attendee.phone_number ?? '');
@@ -711,6 +1003,7 @@ function EditForm({
     onSave({
       name: trimmedName,
       category,
+      medical_council_number: medicalCouncilNumber.trim() || undefined,
       food_preference: foodPreference,
       payment_status: paymentStatus,
       phone_number: trimmedPhone || undefined,
@@ -728,19 +1021,31 @@ function EditForm({
         </div>
       )}
 
-      <div>
-        <label className={labelClasses}>Delegate Name *</label>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className={inputClasses}
-          maxLength={200}
-        />
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className={labelClasses}>Delegate Name *</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClasses}
+            maxLength={200}
+          />
+        </div>
+        <div>
+          <label className={labelClasses}>Medical Council Number</label>
+          <input
+            value={medicalCouncilNumber}
+            onChange={(e) => setMedicalCouncilNumber(e.target.value)}
+            className={inputClasses}
+            placeholder="e.g. TNMC-12345"
+            maxLength={100}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className={labelClasses}>Category *</label>
+          <label className={labelClasses}>Category</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
@@ -754,7 +1059,7 @@ function EditForm({
           </select>
         </div>
         <div>
-          <label className={labelClasses}>Food Preference *</label>
+          <label className={labelClasses}>Food Preference</label>
           <select
             value={foodPreference}
             onChange={(e) => setFoodPreference(e.target.value)}

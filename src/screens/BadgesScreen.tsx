@@ -4,8 +4,15 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import type { Attendee, ImportBatch } from '@/lib/supabase';
 import Badge from '@/components/Badge';
+import SpotStickerBadge from '@/components/SpotStickerBadge';
 import Modal from '@/components/Modal';
-import { type BadgeLayout, loadBadgeLayout, DEFAULT_BADGE_LAYOUT } from '@/lib/badgeLayout';
+import {
+  type BadgeLayout,
+  loadBadgeLayout,
+  DEFAULT_BADGE_LAYOUT,
+  DEFAULT_PAGE_SIZE_CONFIG,
+  DEFAULT_SPOT_STICKER_LAYOUT,
+} from '@/lib/badgeLayout';
 import {
   BadgeCheck,
   Search,
@@ -18,6 +25,7 @@ import {
   FileStack,
   Lock,
   X,
+  Tag,
 } from 'lucide-react';
 
 type PrintType = 'single' | 'reprint' | 'batch';
@@ -66,6 +74,8 @@ export default function BadgesScreen() {
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [badgeLayout, setBadgeLayout] = useState<BadgeLayout>(DEFAULT_BADGE_LAYOUT);
+  const pageSize = badgeLayout.pageSize ?? DEFAULT_PAGE_SIZE_CONFIG;
+  const badgesPerSheet = (pageSize.columns || 1) * (pageSize.rows || 1);
 
   // Selected attendees for "Print Selected"
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -234,6 +244,40 @@ export default function BadgesScreen() {
     doPrint([a], 'single', '1 badge');
   };
 
+  const handlePrintSpotSticker = async (a: Attendee) => {
+    const stickerLayout = badgeLayout.spotSticker ?? DEFAULT_SPOT_STICKER_LAYOUT;
+    const container = document.createElement('div');
+    container.id = 'spot-sticker-direct-print-root';
+    document.body.appendChild(container);
+
+    const { createRoot } = await import('react-dom/client');
+    const reactEl = await import('react');
+    const root = createRoot(container);
+    root.render(
+      reactEl.createElement(() => (
+        <div>
+          <style>{`
+            @page {
+              size: ${stickerLayout.width_mm}mm ${stickerLayout.height_mm}mm;
+              margin: 0;
+            }
+          `}</style>
+          <SpotStickerBadge attendee={a} layout={stickerLayout} />
+        </div>
+      )),
+    );
+    await new Promise((r) => setTimeout(r, 400));
+    const onAfter = () => {
+      window.removeEventListener('afterprint', onAfter);
+      setTimeout(() => {
+        root.unmount();
+        container.remove();
+      }, 200);
+    };
+    window.addEventListener('afterprint', onAfter);
+    window.print();
+  };
+
   const handleReprintConfirm = () => {
     if (!reprintAttendee) return;
     const reason = reprintReason.trim();
@@ -342,14 +386,18 @@ export default function BadgesScreen() {
         </div>
       )}
 
-      <div>
-        <h2 className="text-base font-semibold text-slate-900 mb-1">
-          Badge Printing
-        </h2>
-        <p className="text-sm text-slate-500">
-          Preview and print 4×6 inch badges with QR codes. Each badge prints on
-          its own page.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 mb-0.5">
+            Badge Printing
+          </h2>
+          <p className="text-sm text-slate-500">
+            Preview and print badges. Paper format: <strong className="text-slate-800">{pageSize.name}</strong> ({badgesPerSheet} badge{badgesPerSheet === 1 ? '' : 's'} per sheet).
+          </p>
+        </div>
+        <span className="self-start sm:self-auto text-xs font-semibold px-3 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+          Paper: {pageSize.name}
+        </span>
       </div>
 
       {/* Search + bulk actions */}
@@ -473,8 +521,16 @@ export default function BadgesScreen() {
                           <Eye className="w-4 h-4" />
                         </button>
                         <button
+                          onClick={() => handlePrintSpotSticker(a)}
+                          title="Print Sticker (TVS LP 46 Neo)"
+                          disabled={printing}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-50"
+                        >
+                          <Tag className="w-4 h-4 text-emerald-600" />
+                        </button>
+                        <button
                           onClick={() => handleSinglePrint(a)}
-                          title="Print"
+                          title="Print Full Badge"
                           disabled={printing}
                           className="p-1.5 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 transition disabled:opacity-50"
                         >
@@ -503,31 +559,45 @@ export default function BadgesScreen() {
         open={!!previewAttendee}
         onClose={() => setPreviewAttendee(null)}
         title="Badge Preview"
-        maxWidth="max-w-sm"
+        maxWidth="max-w-md"
       >
         {previewAttendee && (
           <div className="space-y-4">
-            <div className="flex justify-center">
+            <div className="flex justify-center p-2 bg-slate-50/70 rounded-xl border border-slate-100 overflow-auto max-h-[70vh]">
               <Badge attendee={previewAttendee} layout={badgeLayout} preview />
             </div>
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-slate-100">
               <button
                 onClick={() => setPreviewAttendee(null)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="w-full sm:w-auto rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Close
               </button>
-              <button
-                onClick={() => {
-                  const a = previewAttendee;
-                  setPreviewAttendee(null);
-                  handleSinglePrint(a);
-                }}
-                className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-600 to-blue-600 text-white text-sm font-semibold px-4 py-2"
-              >
-                <Printer className="w-4 h-4" />
-                Print
-              </button>
+              <div className="flex w-full sm:w-auto gap-2">
+                <button
+                  onClick={() => {
+                    const a = previewAttendee;
+                    setPreviewAttendee(null);
+                    handlePrintSpotSticker(a);
+                  }}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3 py-2 transition"
+                  title="Print on TVS LP 46 Neo thermal sticker"
+                >
+                  <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                  Sticker (TVS Neo)
+                </button>
+                <button
+                  onClick={() => {
+                    const a = previewAttendee;
+                    setPreviewAttendee(null);
+                    handleSinglePrint(a);
+                  }}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-teal-600 to-blue-600 text-white text-xs font-semibold px-3 py-2 transition"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Full Badge
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -706,12 +776,37 @@ export default function BadgesScreen() {
         )}
       </Modal>
 
-      {/* Off-screen print root — a direct child of document.body via portal.
-          Always mounted; positioned off-screen via CSS so QR canvases render. */}
+      {/* Off-screen print root — dynamic sheet size & grid based on settings */}
       {createPortal(
         <div ref={printRootRef} id="badge-print-root">
-          {printQueue?.attendees.map((a) => (
-            <Badge key={a.id} attendee={a} layout={badgeLayout} />
+          <style>{`
+            @page {
+              size: ${pageSize.width_mm}mm ${pageSize.height_mm}mm;
+              margin: 0;
+            }
+          `}</style>
+          {chunkArray(printQueue?.attendees ?? [], badgesPerSheet).map((sheetAttendees, sheetIdx) => (
+            <div
+              key={sheetIdx}
+              className="a4-print-sheet"
+              style={{
+                width: `${pageSize.width_mm}mm`,
+                height: `${pageSize.height_mm}mm`,
+                maxWidth: `${pageSize.width_mm}mm`,
+                maxHeight: `${pageSize.height_mm}mm`,
+                display: 'grid',
+                gridTemplateColumns: `repeat(${pageSize.columns}, ${pageSize.badge_width_mm || (pageSize.columns === 1 ? pageSize.width_mm : 105)}mm)`,
+                gridTemplateRows: `repeat(${pageSize.rows}, ${pageSize.badge_height_mm || (pageSize.rows === 1 ? pageSize.height_mm : 148.5)}mm)`,
+                justifyContent: 'center',
+                alignContent: 'center',
+                pageBreakAfter: 'always',
+                breakAfter: 'page',
+              }}
+            >
+              {sheetAttendees.map((a) => (
+                <Badge key={a.id} attendee={a} layout={badgeLayout} />
+              ))}
+            </div>
           ))}
         </div>,
         document.body,
@@ -721,6 +816,14 @@ export default function BadgesScreen() {
 }
 
 // ── Print helpers ──
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 function preloadArtwork(): Promise<boolean> {
   return new Promise((resolve) => {
