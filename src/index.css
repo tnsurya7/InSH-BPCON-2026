@@ -186,7 +186,7 @@
   }
 }
 
-/* ── QR Scanner Camera Viewfinder ────────── */
+/* ── QR Scanner Camera Viewfinder & Laser Animations ────────── */
 #qr-scanner-container {
   width: 100% !important;
   min-height: 280px;
@@ -195,14 +195,14 @@
   position: relative !important;
   overflow: hidden !important;
   border-radius: 0.75rem !important;
-  background-color: #0f172a;
+  background-color: #020617;
 }
 
 #qr-scanner-container video {
   width: 100% !important;
   height: 100% !important;
-  min-height: 260px !important;
-  max-height: 420px !important;
+  min-height: 280px !important;
+  max-height: 440px !important;
   object-fit: cover !important;
   border-radius: 0.75rem !important;
   display: block !important;
@@ -216,4 +216,89 @@
 #qr-scanner-container img[alt="Info icon"] {
   display: none !important;
 }
+
+/* Laser sweep animation */
+@keyframes laser-sweep {
+  0% {
+    top: 6%;
+    opacity: 0.7;
+  }
+  50% {
+    top: 92%;
+    opacity: 1;
+  }
+  100% {
+    top: 6%;
+    opacity: 0.7;
+  }
+}
+
+.scanner-laser-line {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #2dd4bf 20%, #ffffff 50%, #2dd4bf 80%, transparent);
+  box-shadow: 0 0 12px #2dd4bf, 0 0 24px rgba(45, 212, 191, 0.8), 0 0 4px #ffffff;
+  border-radius: 9999px;
+  animation: laser-sweep 2.2s ease-in-out infinite;
+  z-index: 10;
+}
+
+/* Subtle corner reticle pulse */
+@keyframes reticle-pulse {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.015);
+  }
+}
+
+.scanner-reticle {
+  animation: reticle-pulse 2.5s ease-in-out infinite;
+}
+
+/* Success / already / error camera flash */
+@keyframes flash-scan-success {
+  0% {
+    background-color: rgba(16, 185, 129, 0.45);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes flash-scan-already {
+  0% {
+    background-color: rgba(245, 158, 11, 0.45);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes flash-scan-error {
+  0% {
+    background-color: rgba(239, 68, 68, 0.45);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.flash-success-overlay {
+  animation: flash-scan-success 0.8s ease-out forwards;
+}
+
+.flash-already-overlay {
+  animation: flash-scan-already 0.8s ease-out forwards;
+}
+
+.flash-error-overlay {
+  animation: flash-scan-error 0.8s ease-out forwards;
+}
+
 
