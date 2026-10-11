@@ -110,10 +110,13 @@ CREATE TABLE IF NOT EXISTS public.attendees (
   qr_token text NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
   import_batch_id uuid REFERENCES public.import_batches(id) ON DELETE SET NULL,
   attendance_status text NOT NULL DEFAULT 'not_checked_in' CHECK (attendance_status IN ('not_checked_in', 'checked_in', 'checked_out')),
+  medical_council_number text,
   created_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.attendees ADD COLUMN IF NOT EXISTS medical_council_number text;
 
 -- Scan events (history log)
 CREATE TABLE IF NOT EXISTS public.scan_events (
@@ -464,14 +467,15 @@ $$;
 
 -- RPC: create_spot_registration
 CREATE OR REPLACE FUNCTION public.create_spot_registration(
-  p_name            text,
-  p_category        text,
-  p_food_preference text,
-  p_payment_status  text,
-  p_phone_number    text DEFAULT NULL,
-  p_email           text DEFAULT NULL,
-  p_gender          text DEFAULT NULL,
-  p_idempotency_key text DEFAULT NULL
+  p_name                   text,
+  p_category               text,
+  p_food_preference        text,
+  p_payment_status         text,
+  p_phone_number           text DEFAULT NULL,
+  p_email                  text DEFAULT NULL,
+  p_gender                 text DEFAULT NULL,
+  p_medical_council_number text DEFAULT NULL,
+  p_idempotency_key        text DEFAULT NULL
 )
 RETURNS TABLE(
   registration_number text,
@@ -493,9 +497,9 @@ DECLARE
   v_existing_id uuid;
 BEGIN
   IF p_idempotency_key IS NOT NULL THEN
-    SELECT attendee_id INTO v_existing_id
+    SELECT spot_registration_keys.attendee_id INTO v_existing_id
     FROM public.spot_registration_keys
-    WHERE idempotency_key = p_idempotency_key
+    WHERE spot_registration_keys.idempotency_key = p_idempotency_key
     LIMIT 1;
     IF v_existing_id IS NOT NULL THEN
       RETURN QUERY SELECT a.registration_number, a.qr_token, a.id
@@ -544,12 +548,12 @@ BEGIN
   INSERT INTO public.attendees (
     registration_number, name, category, phone_number, email, gender,
     food_preference, payment_status, registration_type, qr_token,
-    attendance_status, created_by
+    attendance_status, medical_council_number, created_by
   )
   VALUES (
     v_reg_no, v_name, p_category, v_phone, v_email, p_gender,
     COALESCE(p_food_preference, 'Not Specified'), COALESCE(p_payment_status, 'Paid'), 'spot', v_qr_token,
-    'not_checked_in', auth.uid()
+    'not_checked_in', p_medical_council_number, auth.uid()
   )
   RETURNING id INTO v_attendee_id;
 
@@ -573,6 +577,32 @@ BEGIN
     ));
 
   RETURN QUERY SELECT v_reg_no, v_qr_token, v_attendee_id;
+END;
+$$;
+
+-- 8-parameter overload without medical council number
+CREATE OR REPLACE FUNCTION public.create_spot_registration(
+  p_name            text,
+  p_category        text,
+  p_food_preference text,
+  p_payment_status  text,
+  p_phone_number    text DEFAULT NULL,
+  p_email           text DEFAULT NULL,
+  p_gender          text DEFAULT NULL,
+  p_idempotency_key text DEFAULT NULL
+)
+RETURNS TABLE(
+  registration_number text,
+  qr_token            text,
+  attendee_id         uuid
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY SELECT * FROM public.create_spot_registration(
+    p_name, p_category, p_food_preference, p_payment_status,
+    p_phone_number, p_email, p_gender, NULL::text, p_idempotency_key
+  );
 END;
 $$;
 
