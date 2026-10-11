@@ -123,6 +123,17 @@ export default function ScannerScreen() {
   const startCamera = useCallback(async () => {
     setCameraError('');
     setResult(null);
+
+    if (html5QrRef.current) {
+      try {
+        if (html5QrRef.current.isScanning) {
+          await html5QrRef.current.stop();
+        }
+        await html5QrRef.current.clear();
+      } catch {}
+      html5QrRef.current = null;
+    }
+
     try {
       const html5Qr = new Html5Qrcode(containerId);
       html5QrRef.current = html5Qr;
@@ -152,7 +163,9 @@ export default function ScannerScreen() {
   const stopCamera = useCallback(async () => {
     if (html5QrRef.current) {
       try {
-        await html5QrRef.current.stop();
+        if (html5QrRef.current.isScanning) {
+          await html5QrRef.current.stop();
+        }
         await html5QrRef.current.clear();
       } catch {
         // ignore
@@ -166,7 +179,13 @@ export default function ScannerScreen() {
     return () => {
       // Cleanup on unmount
       if (html5QrRef.current) {
-        html5QrRef.current.stop().then(() => html5QrRef.current?.clear()).catch(() => {});
+        try {
+          if (html5QrRef.current.isScanning) {
+            html5QrRef.current.stop().then(() => html5QrRef.current?.clear()).catch(() => {});
+          } else {
+            html5QrRef.current.clear().catch(() => {});
+          }
+        } catch {}
       }
     };
   }, []);
@@ -420,10 +439,13 @@ export default function ScannerScreen() {
           </div>
         )}
 
-        <div
-          id={containerId}
-          className="rounded-lg overflow-hidden bg-slate-900 min-h-[200px] flex items-center justify-center"
-        >
+        <div className="relative rounded-lg overflow-hidden bg-slate-900 min-h-[220px] flex items-center justify-center">
+          {/* Isolated, empty mount point for Html5Qrcode — no React children allowed inside */}
+          <div
+            id={containerId}
+            className={`w-full ${cameraActive ? 'block' : 'hidden'}`}
+          />
+
           {!cameraActive && !cameraError && (
             <div className="text-slate-500 text-sm py-12 flex flex-col items-center gap-2">
               <QrCode className="w-12 h-12 text-slate-600" />
