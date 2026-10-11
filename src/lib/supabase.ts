@@ -1,7 +1,7 @@
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const token = (currentSession as any)?.access_token || localStorage.getItem('sb_session_token');
+    const token = (currentSession as any)?.access_token;
     if (token && token !== 'mock-token' && token !== 'undefined') {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -208,6 +208,7 @@ const mockAuth = {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, password })
       });
       if (!response.ok) {
@@ -216,9 +217,6 @@ const mockAuth = {
       }
       const data = await response.json();
       currentSession = data.session;
-      if (data.session?.access_token) {
-        try { localStorage.setItem('sb_session_token', data.session.access_token); } catch {}
-      }
       triggerAuthChange('SIGNED_IN', currentSession);
       return { data, error: null };
     } catch (err: unknown) {
@@ -228,14 +226,19 @@ const mockAuth = {
 
   async signOut() {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      currentSession = null;
-      try { localStorage.removeItem('sb_session_token'); } catch {}
-      triggerAuthChange('SIGNED_OUT', null);
-      return { error: null };
-    } catch (err: unknown) {
-      return { error: { message: err instanceof Error ? err.message : 'Logout failed' } };
-    }
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+    } catch {}
+    currentSession = null;
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {}
+    triggerAuthChange('SIGNED_OUT', null);
+    return { error: null };
   },
 
   async getSession() {
@@ -243,22 +246,23 @@ const mockAuth = {
       return { data: { session: currentSession }, error: null };
     }
     try {
-      const response = await fetch('/api/auth/profile');
+      const response = await fetch('/api/auth/profile', {
+        credentials: 'include',
+        headers: getAuthHeaders(),
+      });
       if (!response.ok) {
+        currentSession = null;
         return { data: { session: null }, error: null };
       }
       const data = await response.json();
-      const storedToken = localStorage.getItem('sb_session_token');
-      const token = (data as any)?.token || storedToken || '';
-      if (token) {
-        try { localStorage.setItem('sb_session_token', token); } catch {}
-      }
+      const token = (data as any)?.token || '';
       currentSession = {
         access_token: token,
         user: data.user
       };
       return { data: { session: currentSession }, error: null };
     } catch {
+      currentSession = null;
       return { data: { session: null }, error: null };
     }
   },

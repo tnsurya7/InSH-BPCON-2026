@@ -84,52 +84,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Fallback for known demo admin & staff logins
-      if (!profile && session.user.email) {
-        const email = session.user.email.toLowerCase();
-        if (email.includes('mukesh')) {
-          profile = {
-            id: userId,
-            name: 'Mukesh (Admin)',
-            role: 'admin',
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          fetchError = null;
-        } else if (email.includes('surya')) {
-          profile = {
-            id: userId,
-            name: 'Surya (Admin)',
-            role: 'admin',
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          fetchError = null;
-        } else if (email.includes('admin') || email === 'conf') {
-          profile = {
-            id: userId,
-            name: 'System Administrator',
-            role: 'admin',
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          fetchError = null;
-        } else if (email.includes('staff')) {
-          profile = {
-            id: userId,
-            name: 'Staff Member',
-            role: 'registration',
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          fetchError = null;
-        }
-      }
-
       if (fetchError && !profile) {
         return {
           status: 'unauthenticated',

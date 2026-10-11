@@ -32,6 +32,18 @@ CREATE TABLE IF NOT EXISTS auth.users (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Active auth sessions table in Neon DB
+CREATE TABLE IF NOT EXISTS auth.sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token text UNIQUE NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth.sessions(token);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth.sessions(user_id);
+
 -- Auth UID mock function for Neon DB sessions
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
   SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
@@ -183,11 +195,11 @@ CREATE TABLE IF NOT EXISTS public.spot_registration_keys (
 -- Seed category counters
 INSERT INTO public.registration_counters (counter_key, display_name, prefix, next_value, padding, start_value, last_used_value)
 VALUES
-  ('faculty_counter', 'Faculty', 'BPCON2026', 150, 4, 150, NULL),
-  ('delegate_counter', 'Delegates', 'BPCON2026', 350, 4, 350, NULL),
-  ('student_counter', 'Post & Under Graduates', 'BPCON2026', 850, 4, 850, NULL),
-  ('exhibitor_counter', 'Exhibitors', 'BPCON2026', 1001, 4, 1001, NULL),
-  ('pmcon_counter', 'General / No Category', 'PMCON', 2001, 4, 2001, 2000)
+  ('faculty_counter', 'Faculty', 'PMCON26', 150, 4, 150, NULL),
+  ('delegate_counter', 'Delegates', 'PMCON26', 350, 4, 350, NULL),
+  ('student_counter', 'Post & Under Graduates', 'PMCON26', 850, 4, 850, NULL),
+  ('exhibitor_counter', 'Exhibitors', 'PMCON26', 1001, 4, 1001, NULL),
+  ('pmcon_counter', 'General / No Category', 'PMCON26', 2001, 4, 2001, 2000)
 ON CONFLICT (counter_key) DO UPDATE SET
   display_name = EXCLUDED.display_name,
   prefix = EXCLUDED.prefix;
@@ -518,7 +530,7 @@ BEGIN
     WHEN 'Post Graduates'  THEN 'student_counter'
     WHEN 'Under Graduates' THEN 'student_counter'
     WHEN 'Exhibitors'      THEN 'exhibitor_counter'
-    ELSE 'delegate_counter'
+    ELSE 'pmcon_counter'
   END;
 
   SELECT * INTO v_counter
@@ -527,7 +539,7 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    v_counter.prefix := 'BPCON2026';
+    v_counter.prefix := 'PMCON26';
     v_counter.next_value := 500;
     v_counter.padding := 4;
   END IF;
@@ -551,7 +563,7 @@ BEGIN
     attendance_status, medical_council_number, created_by
   )
   VALUES (
-    v_reg_no, v_name, p_category, v_phone, v_email, p_gender,
+    v_reg_no, v_name, COALESCE(p_category, 'General'), v_phone, v_email, p_gender,
     COALESCE(p_food_preference, 'Not Specified'), COALESCE(p_payment_status, 'Paid'), 'spot', v_qr_token,
     'not_checked_in', p_medical_council_number, auth.uid()
   )
@@ -624,6 +636,109 @@ BEGIN
   FROM public.staff_profiles sp
   LEFT JOIN auth.users au ON au.id = sp.id
   ORDER BY sp.name;
+END;
+$$;
+
+-- RPC: get_reports_totals
+CREATE OR REPLACE FUNCTION public.get_reports_totals()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  result jsonb;
+BEGIN
+  SELECT jsonb_build_object(
+    'total_attendees',   (SELECT COUNT(*) FROM public.attendees),
+    'pre_registered',    (SELECT COUNT(*) FROM public.attendees WHERE registration_type = 'pre_registered'),
+    'spot',              (SELECT COUNT(*) FROM public.attendees WHERE registration_type = 'spot'),
+    'checked_in',        (SELECT COUNT(*) FROM public.attendees WHERE attendance_status = 'checked_in'),
+    'checked_out',       (SELECT COUNT(*) FROM public.attendees WHERE attendance_status = 'checked_out'),
+    'not_checked_in',    (SELECT COUNT(*) FROM public.attendees WHERE attendance_status = 'not_checked_in'),
+    'by_category',       COALESCE((SELECT jsonb_object_agg(COALESCE(category, 'General'), cnt) FROM (SELECT category, COUNT(*) cnt FROM public.attendees GROUP BY category) c), '{}'::jsonb),
+    'by_food',           COALESCE((SELECT jsonb_object_agg(COALESCE(food_preference, 'Not Specified'), cnt) FROM (SELECT food_preference, COUNT(*) cnt FROM public.attendees GROUP BY food_preference) f), '{}'::jsonb),
+    'by_payment',        COALESCE((SELECT jsonb_object_agg(COALESCE(payment_status, 'Paid'), cnt) FROM (SELECT payment_status, COUNT(*) cnt FROM public.attendees GROUP BY payment_status) p), '{}'::jsonb),
+    'badge_prints',      (SELECT COUNT(*) FROM public.badge_print_events),
+    'check_ins',         (SELECT COUNT(*) FROM public.scan_events WHERE action = 'check_in'),
+    'check_outs',        (SELECT COUNT(*) FROM public.scan_events WHERE action = 'check_out')
+  ) INTO result;
+  RETURN result;
+END;
+$$;
+
+-- RPC: get_audit_log
+CREATE OR REPLACE FUNCTION public.get_audit_log(
+  p_offset      int  DEFAULT 0,
+  p_limit       int  DEFAULT 25,
+  p_actor       uuid DEFAULT NULL,
+  p_action      text DEFAULT NULL,
+  p_target_type text DEFAULT NULL,
+  p_from        timestamptz DEFAULT NULL,
+  p_to          timestamptz DEFAULT NULL
+)
+RETURNS TABLE(
+  id           uuid,
+  created_at   timestamptz,
+  actor_id     uuid,
+  actor_name   text,
+  action       text,
+  target_type  text,
+  target_id    uuid,
+  details      jsonb
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_limit > 200 THEN p_limit := 200; END IF;
+  RETURN QUERY
+  SELECT
+    ae.id,
+    ae.created_at,
+    ae.actor_id,
+    sp.name,
+    ae.action,
+    ae.target_type,
+    ae.target_id,
+    ae.details
+  FROM public.audit_events ae
+  LEFT JOIN public.staff_profiles sp ON sp.id = ae.actor_id
+  WHERE (p_actor IS NULL OR ae.actor_id = p_actor)
+    AND (p_action IS NULL OR ae.action = p_action)
+    AND (p_target_type IS NULL OR ae.target_type = p_target_type)
+    AND (p_from IS NULL OR ae.created_at >= p_from)
+    AND (p_to   IS NULL OR ae.created_at <= p_to)
+  ORDER BY ae.created_at DESC
+  LIMIT p_limit
+  OFFSET p_offset;
+END;
+$$;
+
+-- RPC: get_audit_log_count
+CREATE OR REPLACE FUNCTION public.get_audit_log_count(
+  p_actor       uuid DEFAULT NULL,
+  p_action      text DEFAULT NULL,
+  p_target_type text DEFAULT NULL,
+  p_from        timestamptz DEFAULT NULL,
+  p_to          timestamptz DEFAULT NULL
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_count bigint;
+BEGIN
+  SELECT COUNT(*) INTO v_count
+  FROM public.audit_events ae
+  WHERE (p_actor IS NULL OR ae.actor_id = p_actor)
+    AND (p_action IS NULL OR ae.action = p_action)
+    AND (p_target_type IS NULL OR ae.target_type = p_target_type)
+    AND (p_from IS NULL OR ae.created_at >= p_from)
+    AND (p_to   IS NULL OR ae.created_at <= p_to);
+  RETURN v_count;
 END;
 $$;
 `;

@@ -150,7 +150,7 @@ export const BADGE_WIDTH_IN = 4;
 export const BADGE_HEIGHT_IN = 6;
 // Position (in inches) of the bottom artwork landmark edge in the
 // background artwork — used to stop the name/QR from overlapping it.
-export const FOOTER_TOP_IN = 4.48;
+export const FOOTER_TOP_IN = 5.2;
 // White quiet zone (in inches) maintained around the QR code.
 export const QR_QUIET_ZONE_IN = 0.08;
 

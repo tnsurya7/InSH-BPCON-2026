@@ -37,7 +37,7 @@ export default function SpotRegistrationScreen() {
   const [category, setCategory] = useState<string>('');
   const [medicalCouncilNumber, setMedicalCouncilNumber] = useState('');
   const [foodPreference, setFoodPreference] = useState<string>('');
-  const [paymentStatus, setPaymentStatus] = useState<string>('');
+  const [paymentStatus, setPaymentStatus] = useState<string>('Paid');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [gender, setGender] = useState('');
@@ -90,7 +90,7 @@ export default function SpotRegistrationScreen() {
     setCategory('');
     setMedicalCouncilNumber('');
     setFoodPreference('');
-    setPaymentStatus('');
+    setPaymentStatus('Paid');
     setPhone('');
     setEmail('');
     setGender('');
@@ -103,7 +103,7 @@ export default function SpotRegistrationScreen() {
     setFormError('');
     setSuccess(null);
 
-    // Frontend validation
+    // Frontend validation - Only Delegate Name is mandatory
     const trimmedName = name.trim();
     if (!trimmedName) {
       setFormError('Delegate name is required.');
@@ -111,10 +111,6 @@ export default function SpotRegistrationScreen() {
     }
     if (trimmedName.length > 200) {
       setFormError('Delegate name is too long (maximum 200 characters).');
-      return;
-    }
-    if (!paymentStatus) {
-      setFormError('Please select a payment status.');
       return;
     }
 
@@ -135,6 +131,7 @@ export default function SpotRegistrationScreen() {
 
     const finalCategory = category.trim() || null;
     const finalFoodPreference = foodPreference || 'Not Specified';
+    const finalPaymentStatus = paymentStatus || 'Paid';
     const trimmedMedicalCouncil = medicalCouncilNumber.trim();
 
     // Exhibitor config guard
@@ -155,7 +152,7 @@ export default function SpotRegistrationScreen() {
         p_name: trimmedName,
         p_category: finalCategory,
         p_food_preference: finalFoodPreference,
-        p_payment_status: paymentStatus,
+        p_payment_status: finalPaymentStatus,
         p_phone_number: trimmedPhone || null,
         p_email: trimmedEmail ? trimmedEmail.toLowerCase() : null,
         p_gender: gender || null,
@@ -164,7 +161,6 @@ export default function SpotRegistrationScreen() {
       });
 
       if (error) {
-        // Extract a user-friendly message, strip database details
         const msg = error.message;
         if (msg.includes('not yet configured')) {
           setFormError(
@@ -172,16 +168,8 @@ export default function SpotRegistrationScreen() {
           );
         } else if (msg.includes('Permission denied')) {
           setFormError('You do not have permission to create spot registrations.');
-        } else if (
-          msg.includes('Delegate name is required') ||
-          msg.includes('Invalid') ||
-          msg.includes('too long')
-        ) {
-          setFormError(msg);
         } else {
-          setFormError(
-            'Unable to complete registration. Please check your details and try again.',
-          );
+          setFormError(msg || 'Unable to complete registration. Please check your details and try again.');
         }
         return;
       }
@@ -344,7 +332,7 @@ export default function SpotRegistrationScreen() {
           Spot Registration
         </h2>
         <p className="text-sm text-slate-500">
-          Register a new attendee on-site. Unique spot registration numbers (PMCON-5000+ series) and sticker badges for TVS LP 46 Neo are generated instantly.
+          Register a new attendee on-site. Unique spot registration numbers (PMCON26 series) and sticker badges for TVS LP 46 Neo are generated instantly.
         </p>
       </div>
 
@@ -503,7 +491,7 @@ export default function SpotRegistrationScreen() {
               disabled={submitting}
               className={inputClasses}
             >
-              <option value="">No Category (Auto PMCON number)…</option>
+              <option value="">No Category (Auto PMCON26 number)…</option>
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -532,17 +520,16 @@ export default function SpotRegistrationScreen() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelClasses}>Payment Status *</label>
+            <label className={labelClasses}>Payment Status</label>
             <select
               value={paymentStatus}
               onChange={(e) => setPaymentStatus(e.target.value)}
               disabled={submitting}
               className={inputClasses}
             >
-              <option value="">Select…</option>
               {PAYMENT_STATUSES.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {p} {p === 'Paid' ? '(Default)' : ''}
                 </option>
               ))}
             </select>

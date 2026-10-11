@@ -67,7 +67,7 @@ const defaultMockStore = {
     {
       counter_key: 'faculty_counter',
       display_name: 'Faculty',
-      prefix: 'BPCON2026',
+      prefix: 'PMCON26',
       start_value: 150,
       next_value: 150,
       padding: 4,
@@ -76,7 +76,7 @@ const defaultMockStore = {
     {
       counter_key: 'delegate_counter',
       display_name: 'Delegates',
-      prefix: 'BPCON2026',
+      prefix: 'PMCON26',
       start_value: 350,
       next_value: 350,
       padding: 4,
@@ -85,7 +85,7 @@ const defaultMockStore = {
     {
       counter_key: 'student_counter',
       display_name: 'Post & Under Graduates',
-      prefix: 'BPCON2026',
+      prefix: 'PMCON26',
       start_value: 850,
       next_value: 850,
       padding: 4,
@@ -94,7 +94,7 @@ const defaultMockStore = {
     {
       counter_key: 'exhibitor_counter',
       display_name: 'Exhibitors',
-      prefix: 'BPCON2026',
+      prefix: 'PMCON26',
       start_value: 1001,
       next_value: 1001,
       padding: 4,
@@ -103,7 +103,7 @@ const defaultMockStore = {
     {
       counter_key: 'pmcon_counter',
       display_name: 'General / No Category',
-      prefix: 'PMCON',
+      prefix: 'PMCON26',
       start_value: 2001,
       next_value: 2005,
       padding: 4,
@@ -167,6 +167,20 @@ async function ensureDatabaseReady() {
           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, active = true, email = EXCLUDED.email
         `, [userId, u.name, u.role, u.email.toLowerCase()]);
       }
+
+      // Ensure active sessions table exists in Neon DB
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS auth.sessions (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+          token text UNIQUE NOT NULL,
+          created_at timestamptz DEFAULT now(),
+          expires_at timestamptz NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth.sessions(token);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth.sessions(user_id);
+      `);
+
       isDbInitialized = true;
     } finally {
       client.release();
@@ -182,19 +196,40 @@ if (pool) {
 
 // ──────────────────────────── AUTHENTICATION MIDDLEWARE ────────────────────────────
 const authenticateUser = async (req, res, next) => {
-  let token = req.cookies.sb_session;
-  const authHeader = req.headers.authorization;
+  let token = req.cookies?.sb_session;
+  const authHeader = req.headers?.authorization;
   if (!token && authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7);
   }
 
-  if (token) {
+  if (token && token !== 'undefined' && token !== 'null') {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-      return next();
+      if (pool) {
+        // Verify active session against Neon DB
+        const sessRes = await pool.query(
+          'SELECT user_id FROM auth.sessions WHERE token = $1 AND expires_at > now()',
+          [token]
+        );
+        if (sessRes.rows.length > 0) {
+          req.user = decoded;
+          req.token = token;
+          return next();
+        } else {
+          // Token is revoked, deleted in Neon DB on sign-out, or expired
+          req.user = null;
+          req.token = null;
+          return next();
+        }
+      } else {
+        req.user = decoded;
+        req.token = token;
+        return next();
+      }
     } catch {
       // token expired or invalid
+      req.user = null;
+      req.token = null;
     }
   }
 
@@ -334,7 +369,20 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
-      res.cookie('sb_session', token, { httpOnly: true, secure: false });
+
+      // Save active session in Neon DB auth.sessions
+      await pool.query(
+        'INSERT INTO auth.sessions (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL \'24 hours\')',
+        [user.id, token]
+      );
+
+      res.cookie('sb_session', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 24 * 60 * 60 * 1000,
+      });
 
       return res.json({
         session: {
@@ -344,6 +392,7 @@ app.post('/api/auth/login', async (req, res) => {
           user: { id: user.id, email: user.email },
         },
         profile,
+        token,
       });
     } catch (err) {
       console.error('Database login error:', err.message);
@@ -364,7 +413,13 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ id: matchedMockUser.id, email: matchedMockUser.email }, JWT_SECRET, {
       expiresIn: '24h',
     });
-    res.cookie('sb_session', token, { httpOnly: true, secure: false });
+    res.cookie('sb_session', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 24 * 60 * 60 * 1000,
+    });
 
     return res.json({
       session: {
@@ -374,99 +429,78 @@ app.post('/api/auth/login', async (req, res) => {
         user: { id: matchedMockUser.id, email: matchedMockUser.email },
       },
       profile,
+      token,
     });
   }
 
   return res.status(400).json({ error: 'Invalid login credentials' });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('sb_session');
+app.post('/api/auth/logout', async (req, res) => {
+  let token = req.cookies?.sb_session;
+  const authHeader = req.headers?.authorization;
+  if (!token && authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  }
+
+  if (token && pool) {
+    try {
+      await pool.query('DELETE FROM auth.sessions WHERE token = $1', [token]);
+    } catch (err) {
+      console.error('Database logout session deletion error:', err.message);
+    }
+  }
+
+  res.clearCookie('sb_session', { path: '/' });
   res.json({ success: true });
 });
 
 app.get('/api/auth/profile', async (req, res) => {
-  let userId = req.user?.id;
-  let userEmail = req.user?.email;
+  const userId = req.user?.id;
 
-  if (pool && userId) {
+  if (!userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  if (pool) {
     try {
       const profileRes = await pool.query(
         'SELECT id, name, role, active, created_at, updated_at FROM public.staff_profiles WHERE id = $1',
         [userId]
       );
       if (profileRes.rows.length > 0) {
-        const token = jwt.sign({ id: userId, email: userEmail }, JWT_SECRET, { expiresIn: '24h' });
-        res.cookie('sb_session', token, { httpOnly: true, secure: false });
+        const profile = profileRes.rows[0];
+        if (!profile.active) {
+          return res.status(403).json({ error: 'Account inactive' });
+        }
         return res.json({
           user: req.user,
-          profile: profileRes.rows[0],
-          token,
+          profile,
+          token: req.token,
         });
       }
     } catch (err) {
       console.error('Database profile fetch error:', err.message);
     }
+  } else {
+    const profile = mockStore.staff_profiles.find((p) => p.id === userId);
+    if (profile) {
+      return res.json({
+        user: req.user,
+        profile,
+        token: req.token,
+      });
+    }
   }
 
-  if (pool && !userId) {
-    try {
-      const firstAdmin = await pool.query(
-        'SELECT sp.id, sp.name, sp.role, sp.active, sp.created_at, sp.updated_at, au.email FROM public.staff_profiles sp JOIN auth.users au ON au.id = sp.id WHERE sp.role = $1 AND sp.active = true LIMIT 1',
-        ['admin']
-      );
-      if (firstAdmin.rows.length > 0) {
-        const row = firstAdmin.rows[0];
-        const token = jwt.sign({ id: row.id, email: row.email }, JWT_SECRET, { expiresIn: '24h' });
-        res.cookie('sb_session', token, { httpOnly: true, secure: false });
-        return res.json({
-          user: { id: row.id, email: row.email },
-          profile: row,
-          token,
-        });
-      }
-    } catch {}
-  }
-
-  // Fallback to mock profile
-  const mockProfile = mockStore.staff_profiles[0];
-  const token = jwt.sign({ id: mockProfile.id, email: mockProfile.email }, JWT_SECRET, { expiresIn: '24h' });
-  res.cookie('sb_session', token, { httpOnly: true, secure: false });
-  res.json({
-    user: { id: mockProfile.id, email: mockProfile.email },
-    profile: mockProfile,
-    token,
-  });
+  return res.status(401).json({ error: 'Not authenticated' });
 });
 
 // ─────────────────────────────── QUERY API ───────────────────────────────────
 
 app.post('/api/query', async (req, res) => {
   if (!req.user) {
-    if (pool) {
-      try {
-        const adminRes = await pool.query(
-          'SELECT sp.id, COALESCE(au.email, sp.email) as email, sp.role FROM public.staff_profiles sp LEFT JOIN auth.users au ON au.id = sp.id WHERE sp.role = $1 AND sp.active = true LIMIT 1',
-          ['admin']
-        );
-        if (adminRes.rows.length > 0) {
-          req.user = {
-            id: adminRes.rows[0].id,
-            email: adminRes.rows[0].email,
-            user_metadata: { role: adminRes.rows[0].role },
-            app_metadata: {},
-          };
-        }
-      } catch {}
-    }
-    if (!req.user) {
-      req.user = {
-        id: '00000000-0000-0000-0000-000000000001',
-        email: DEFAULT_ADMIN_EMAIL,
-        user_metadata: { role: 'admin' },
-        app_metadata: {},
-      };
-    }
+    return res.status(401).json({ error: 'Unauthorized. Please sign in.' });
   }
 
   const { table, method, columns, filters, orderBy, limit, offset, data, countOption } = req.body;
@@ -646,7 +680,7 @@ app.post('/api/query', async (req, res) => {
 
 app.post('/api/rpc', async (req, res) => {
   if (!req.user) {
-    req.user = { id: '00000000-0000-0000-0000-000000000001', email: DEFAULT_ADMIN_EMAIL };
+    return res.status(401).json({ error: 'Unauthorized. Please sign in.' });
   }
 
   const { name, args } = req.body;
