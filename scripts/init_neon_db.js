@@ -741,6 +741,172 @@ BEGIN
   RETURN v_count;
 END;
 $$;
+
+-- RPC: log_audit
+CREATE OR REPLACE FUNCTION public.log_audit(
+  p_action      text,
+  p_target_type text DEFAULT NULL,
+  p_target_id   uuid DEFAULT NULL,
+  p_details     jsonb DEFAULT NULL
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.audit_events (actor_id, action, target_type, target_id, details)
+  VALUES (auth.uid(), p_action, p_target_type, p_target_id, p_details);
+END;
+$$;
+
+-- RPC: advance_counter_for_category
+CREATE OR REPLACE FUNCTION public.advance_counter_for_category(p_category text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_counter_key text;
+  v_highest     int;
+BEGIN
+  v_counter_key := CASE p_category
+    WHEN 'Faculty'         THEN 'faculty_counter'
+    WHEN 'Delegates'       THEN 'delegate_counter'
+    WHEN 'Post Graduates'  THEN 'student_counter'
+    WHEN 'Under Graduates' THEN 'student_counter'
+    WHEN 'Exhibitors'      THEN 'exhibitor_counter'
+    ELSE 'pmcon_counter'
+  END;
+
+  SELECT COALESCE(MAX(substring(a.registration_number FROM '([0-9]+)$')::int), 0)
+  INTO v_highest
+  FROM public.attendees a
+  WHERE (p_category IS NOT NULL AND a.category = p_category)
+     OR (p_category IS NULL AND a.category IS NULL);
+
+  IF v_highest > 0 THEN
+    UPDATE public.registration_counters
+    SET next_value = GREATEST(next_value, v_highest + 1),
+        last_used_value = GREATEST(COALESCE(last_used_value, 0), v_highest),
+        updated_at = now()
+    WHERE counter_key = v_counter_key;
+  END IF;
+END;
+$$;
+
+-- RPC: configure_counter
+CREATE OR REPLACE FUNCTION public.configure_counter(
+  p_counter_key     text,
+  p_new_next_value  int,
+  p_new_start_value int DEFAULT NULL
+)
+RETURNS TABLE(
+  counter_key text,
+  start_value int,
+  next_value  int
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT is_active_staff('admin') THEN
+    RAISE EXCEPTION 'Permission denied: admin only';
+  END IF;
+
+  UPDATE public.registration_counters
+  SET next_value  = p_new_next_value,
+      start_value = COALESCE(p_new_start_value, start_value, p_new_next_value),
+      updated_at  = now()
+  WHERE public.registration_counters.counter_key = p_counter_key;
+
+  INSERT INTO public.audit_events (actor_id, action, target_type, target_id, details)
+  VALUES (auth.uid(), 'counter_configured', 'registration_counter', NULL,
+    jsonb_build_object(
+      'counter_key', p_counter_key,
+      'new_next_value', p_new_next_value,
+      'new_start_value', p_new_start_value
+    ));
+
+  RETURN QUERY
+  SELECT c.counter_key, c.start_value, c.next_value
+  FROM public.registration_counters c
+  WHERE c.counter_key = p_counter_key;
+END;
+$$;
+
+-- RPC: import_attendees_batch
+CREATE OR REPLACE FUNCTION public.import_attendees_batch(
+  p_file_name text,
+  p_rows      jsonb
+)
+RETURNS TABLE(
+  batch_id       uuid,
+  imported_count int
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_batch_id     uuid;
+  v_row          jsonb;
+  v_attendee_id  uuid;
+  v_count        int := 0;
+  v_cat          text;
+BEGIN
+  IF NOT is_active_staff('admin') AND NOT is_active_staff('registration') AND NOT is_active_staff('staff') THEN
+    RAISE EXCEPTION 'Permission denied: only staff can import';
+  END IF;
+
+  INSERT INTO public.import_batches (file_name, row_count, imported_count, rejected_count)
+  VALUES (p_file_name, jsonb_array_length(p_rows), 0, 0)
+  RETURNING id INTO v_batch_id;
+
+  FOR v_row IN SELECT * FROM jsonb_array_elements(p_rows)
+  LOOP
+    INSERT INTO public.attendees (
+      registration_number, name, category, phone_number, email, gender,
+      food_preference, payment_status, registration_type,
+      import_batch_id, attendance_status, created_by
+    )
+    VALUES (
+      v_row->>'registration_number',
+      v_row->>'name',
+      COALESCE(v_row->>'category', 'General'),
+      NULLIF(v_row->>'phone_number', ''),
+      NULLIF(v_row->>'email', ''),
+      NULLIF(v_row->>'gender', ''),
+      COALESCE(v_row->>'food_preference', 'Not Specified'),
+      COALESCE(v_row->>'payment_status', 'Paid'),
+      'pre_registered',
+      v_batch_id,
+      'not_checked_in',
+      auth.uid()
+    )
+    RETURNING id INTO v_attendee_id;
+    v_count := v_count + 1;
+  END LOOP;
+
+  UPDATE public.import_batches
+  SET imported_count = v_count,
+      rejection_summary = jsonb_build_object('valid', v_count, 'rejected', 0)
+  WHERE id = v_batch_id;
+
+  FOR v_cat IN SELECT DISTINCT COALESCE(r->>'category', 'General') FROM jsonb_array_elements(p_rows) r
+  LOOP
+    PERFORM public.advance_counter_for_category(v_cat);
+  END LOOP;
+
+  INSERT INTO public.audit_events (actor_id, action, target_type, target_id, details)
+  VALUES (auth.uid(), 'attendees_imported', 'import_batch', v_batch_id,
+    jsonb_build_object('file_name', p_file_name, 'count', v_count));
+
+  RETURN QUERY SELECT v_batch_id, v_count;
+END;
+$$;
 `;
 
 async function initNeonDb() {

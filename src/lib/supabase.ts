@@ -21,6 +21,7 @@ class SupabaseQueryBuilder {
   private dataVal: unknown = null;
   private isSingle: boolean = false;
   private countOption: string | undefined = undefined;
+  private onConflictCol: string | undefined = undefined;
 
   constructor(table: string) {
     this.table = table;
@@ -39,9 +40,10 @@ class SupabaseQueryBuilder {
     return this;
   }
 
-  upsert(data: unknown, _options?: { onConflict?: string }) {
+  upsert(data: unknown, options?: { onConflict?: string }) {
     this.dataVal = data;
-    this.method = 'insert';
+    this.method = 'upsert';
+    this.onConflictCol = options?.onConflict;
     return this;
   }
 
@@ -132,6 +134,7 @@ class SupabaseQueryBuilder {
           limit: this.limitVal,
           offset: this.offsetVal,
           data: this.dataVal,
+          onConflict: this.onConflictCol,
           countOption: this.countOption
         })
       });

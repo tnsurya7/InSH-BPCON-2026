@@ -503,7 +503,7 @@ app.post('/api/query', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized. Please sign in.' });
   }
 
-  const { table, method, columns, filters, orderBy, limit, offset, data, countOption } = req.body;
+  const { table, method, columns, filters, orderBy, limit, offset, data, onConflict, countOption } = req.body;
 
   if (!pool) {
     const result = executeMockQuery({ table, method, columns, filters, orderBy, limit, offset, data, countOption });
@@ -529,7 +529,11 @@ app.post('/api/query', async (req, res) => {
       for (const row of rows) {
         const rowPlaceholders = [];
         for (const key of keys) {
-          params.push(row[key]);
+          let val = row[key];
+          if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+            val = JSON.stringify(val);
+          }
+          params.push(val);
           rowPlaceholders.push(`$${params.length}`);
         }
         rowsPlaceholder.push(`(${rowPlaceholders.join(', ')})`);
@@ -546,18 +550,23 @@ app.post('/api/query', async (req, res) => {
       const rows = isArray ? data : [data];
       if (rows.length === 0) return res.status(400).json({ error: 'No data to upsert' });
       const keys = Object.keys(rows[0]);
-      const conflictKey = keys.includes('key') ? 'key' : 'id';
+      const conflictKey = onConflict || (keys.includes('key') ? 'key' : 'id');
       const updateSets = keys.filter((k) => k !== conflictKey).map((k) => `${k} = EXCLUDED.${k}`);
       const rowsPlaceholder = [];
       for (const row of rows) {
         const rowPlaceholders = [];
         for (const key of keys) {
-          params.push(row[key]);
+          let val = row[key];
+          if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+            val = JSON.stringify(val);
+          }
+          params.push(val);
           rowPlaceholders.push(`$${params.length}`);
         }
         rowsPlaceholder.push(`(${rowPlaceholders.join(', ')})`);
       }
-      sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES ${rowsPlaceholder.join(', ')} ON CONFLICT (${conflictKey}) DO UPDATE SET ${updateSets.join(', ')} RETURNING *`;
+      const updateClause = updateSets.length > 0 ? `DO UPDATE SET ${updateSets.join(', ')}` : 'DO NOTHING';
+      sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES ${rowsPlaceholder.join(', ')} ON CONFLICT (${conflictKey}) ${updateClause} RETURNING *`;
     } else if (method === 'delete') {
       if (table === 'attendees') {
         try {
