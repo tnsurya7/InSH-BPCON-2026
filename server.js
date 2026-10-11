@@ -23,93 +23,45 @@ const pool = hasDatabase
     })
   : null;
 
-// Dynamic configuration from environment variables (Zero hardcoding)
-const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@example.com').toLowerCase().trim();
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin@123';
+// Dynamic configuration from environment variables (Zero hardcoding - Pure process.env)
+const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const DEFAULT_ADMIN_EMAIL_2 = (process.env.ADMIN_EMAIL_2 || '').toLowerCase().trim();
 const DEFAULT_ADMIN_PASSWORD_2 = process.env.ADMIN_PASSWORD_2 || '';
-const DEFAULT_ADMIN_EMAIL_3 = (process.env.ADMIN_EMAIL_3 || '').toLowerCase().trim();
-const DEFAULT_ADMIN_PASSWORD_3 = process.env.ADMIN_PASSWORD_3 || '';
-const DEFAULT_STAFF_EMAIL = (process.env.STAFF_EMAIL || 'staff@example.com').toLowerCase().trim();
-const DEFAULT_STAFF_PASSWORD = process.env.STAFF_PASSWORD || 'staff123';
+const DEFAULT_STAFF_EMAIL = (process.env.STAFF_EMAIL || '').toLowerCase().trim();
+const DEFAULT_STAFF_PASSWORD = process.env.STAFF_PASSWORD || '';
+const DEFAULT_SCANNER_EMAIL = (process.env.SCANNER_EMAIL || '').toLowerCase().trim();
+const DEFAULT_SCANNER_PASSWORD = process.env.SCANNER_PASSWORD || '';
 
 // ──────────────────────────── IN-MEMORY FALLBACK STORE ────────────────────────────
 const defaultMockStore = {
   users: [
-    {
-      id: '00000000-0000-0000-0000-000000000001',
-      email: DEFAULT_ADMIN_EMAIL,
-      password: DEFAULT_ADMIN_PASSWORD,
-    },
-    ...(DEFAULT_ADMIN_EMAIL_2
-      ? [
-          {
-            id: '00000000-0000-0000-0000-000000000002',
-            email: DEFAULT_ADMIN_EMAIL_2,
-            password: DEFAULT_ADMIN_PASSWORD_2,
-          },
-        ]
+    ...(DEFAULT_ADMIN_EMAIL && DEFAULT_ADMIN_PASSWORD
+      ? [{ id: '00000000-0000-0000-0000-000000000001', email: DEFAULT_ADMIN_EMAIL, password: DEFAULT_ADMIN_PASSWORD }]
       : []),
-    ...(DEFAULT_ADMIN_EMAIL_3
-      ? [
-          {
-            id: '00000000-0000-0000-0000-000000000003',
-            email: DEFAULT_ADMIN_EMAIL_3,
-            password: DEFAULT_ADMIN_PASSWORD_3,
-          },
-        ]
+    ...(DEFAULT_ADMIN_EMAIL_2 && DEFAULT_ADMIN_PASSWORD_2
+      ? [{ id: '00000000-0000-0000-0000-000000000002', email: DEFAULT_ADMIN_EMAIL_2, password: DEFAULT_ADMIN_PASSWORD_2 }]
       : []),
-    {
-      id: '00000000-0000-0000-0000-000000000005',
-      email: DEFAULT_STAFF_EMAIL,
-      password: DEFAULT_STAFF_PASSWORD,
-    },
+    ...(DEFAULT_STAFF_EMAIL && DEFAULT_STAFF_PASSWORD
+      ? [{ id: '00000000-0000-0000-0000-000000000003', email: DEFAULT_STAFF_EMAIL, password: DEFAULT_STAFF_PASSWORD }]
+      : []),
+    ...(DEFAULT_SCANNER_EMAIL && DEFAULT_SCANNER_PASSWORD
+      ? [{ id: '00000000-0000-0000-0000-000000000004', email: DEFAULT_SCANNER_EMAIL, password: DEFAULT_SCANNER_PASSWORD }]
+      : []),
   ],
   staff_profiles: [
-    {
-      id: '00000000-0000-0000-0000-000000000001',
-      name: 'System Administrator',
-      role: 'admin',
-      active: true,
-      email: DEFAULT_ADMIN_EMAIL,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
+    ...(DEFAULT_ADMIN_EMAIL
+      ? [{ id: '00000000-0000-0000-0000-000000000001', name: 'System Administrator', role: 'admin', active: true, email: DEFAULT_ADMIN_EMAIL, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+      : []),
     ...(DEFAULT_ADMIN_EMAIL_2
-      ? [
-          {
-            id: '00000000-0000-0000-0000-000000000002',
-            name: 'Mukesh (Admin)',
-            role: 'admin',
-            active: true,
-            email: DEFAULT_ADMIN_EMAIL_2,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]
+      ? [{ id: '00000000-0000-0000-0000-000000000002', name: 'Admin', role: 'admin', active: true, email: DEFAULT_ADMIN_EMAIL_2, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
       : []),
-    ...(DEFAULT_ADMIN_EMAIL_3
-      ? [
-          {
-            id: '00000000-0000-0000-0000-000000000003',
-            name: 'Surya (Admin)',
-            role: 'admin',
-            active: true,
-            email: DEFAULT_ADMIN_EMAIL_3,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]
+    ...(DEFAULT_STAFF_EMAIL
+      ? [{ id: '00000000-0000-0000-0000-000000000003', name: 'Conference Staff', role: 'staff', active: true, email: DEFAULT_STAFF_EMAIL, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
       : []),
-    {
-      id: '00000000-0000-0000-0000-000000000005',
-      name: 'Staff Member',
-      role: 'staff',
-      active: true,
-      email: DEFAULT_STAFF_EMAIL,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
+    ...(DEFAULT_SCANNER_EMAIL
+      ? [{ id: '00000000-0000-0000-0000-000000000004', name: 'Scanner Operator', role: 'scanner', active: true, email: DEFAULT_SCANNER_EMAIL, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+      : []),
   ],
   registration_counters: [
     {
@@ -191,14 +143,14 @@ async function ensureDatabaseReady() {
     try {
       // Ensure seed users from env exist with hashed passwords
       const seedUsers = [
-        { email: DEFAULT_ADMIN_EMAIL, password: DEFAULT_ADMIN_PASSWORD, name: 'System Administrator', role: 'admin' },
-        ...(DEFAULT_ADMIN_EMAIL_2 ? [{ email: DEFAULT_ADMIN_EMAIL_2, password: DEFAULT_ADMIN_PASSWORD_2, name: 'Mukesh (Admin)', role: 'admin' }] : []),
-        ...(DEFAULT_ADMIN_EMAIL_3 ? [{ email: DEFAULT_ADMIN_EMAIL_3, password: DEFAULT_ADMIN_PASSWORD_3, name: 'Surya (Admin)', role: 'admin' }] : []),
-        { email: DEFAULT_STAFF_EMAIL, password: DEFAULT_STAFF_PASSWORD, name: 'Staff Member', role: 'staff' },
+        { email: DEFAULT_ADMIN_EMAIL, password: DEFAULT_ADMIN_PASSWORD, name: 'Surya (System Administrator)', role: 'admin' },
+        { email: DEFAULT_ADMIN_EMAIL_2, password: DEFAULT_ADMIN_PASSWORD_2, name: 'Mukesh (Admin)', role: 'admin' },
+        { email: DEFAULT_STAFF_EMAIL, password: DEFAULT_STAFF_PASSWORD, name: 'Conference Staff', role: 'staff' },
+        { email: DEFAULT_SCANNER_EMAIL, password: DEFAULT_SCANNER_PASSWORD, name: 'Scanner Operator', role: 'scanner' },
       ];
 
       for (const u of seedUsers) {
-        if (!u.email) continue;
+        if (!u.email || !u.password) continue;
         const exist = await client.query('SELECT id FROM auth.users WHERE LOWER(email) = $1', [u.email.toLowerCase()]);
         let userId;
         const hash = bcrypt.hashSync(u.password, 10);

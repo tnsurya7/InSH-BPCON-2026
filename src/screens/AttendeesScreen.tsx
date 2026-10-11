@@ -47,7 +47,7 @@ export default function AttendeesScreen() {
   const { authState } = useAuth();
   const role =
     authState.status === 'authenticated' ? authState.profile.role : 'scanner';
-  const canManage = role === 'admin' || role === 'staff';
+  const canManage = role === 'admin' || role === 'staff' || role === 'registration';
 
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [loading, setLoading] = useState(true);

@@ -534,7 +534,7 @@ BEGIN
 
   LOOP
     v_reg_no := v_counter.prefix || '-' || lpad(v_counter.next_value::text, COALESCE(v_counter.padding, 4), '0');
-    SELECT EXISTS(SELECT 1 FROM public.attendees WHERE registration_number = v_reg_no) INTO v_exists;
+    SELECT EXISTS(SELECT 1 FROM public.attendees WHERE public.attendees.registration_number = v_reg_no) INTO v_exists;
     EXIT WHEN NOT v_exists;
     v_counter.next_value := v_counter.next_value + 1;
   END LOOP;
@@ -609,30 +609,30 @@ async function initNeonDb() {
     // Check and seed default admin/staff from environment variables
     const usersToSeed = [
       {
-        email: process.env.ADMIN_EMAIL || 'admin@gmail.com',
-        password: process.env.ADMIN_PASSWORD || 'admin@123',
-        name: 'System Administrator',
+        email: process.env.ADMIN_EMAIL,
+        password: process.env.ADMIN_PASSWORD,
+        name: 'Surya (System Administrator)',
         role: 'admin'
       },
       {
-        email: process.env.ADMIN_EMAIL_2 || 'mukesh@gmail.com',
-        password: process.env.ADMIN_PASSWORD_2 || 'mukesh123',
+        email: process.env.ADMIN_EMAIL_2,
+        password: process.env.ADMIN_PASSWORD_2,
         name: 'Mukesh (Admin)',
         role: 'admin'
       },
       {
-        email: process.env.ADMIN_EMAIL_3 || 'surya@gmail.com',
-        password: process.env.ADMIN_PASSWORD_3 || 'surya123',
-        name: 'Surya (Admin)',
-        role: 'admin'
+        email: process.env.STAFF_EMAIL,
+        password: process.env.STAFF_PASSWORD,
+        name: 'Conference Staff',
+        role: 'staff'
       },
       {
-        email: process.env.STAFF_EMAIL || 'staff@gmail.com',
-        password: process.env.STAFF_PASSWORD || 'staff123',
-        name: 'Staff Member',
-        role: 'staff'
+        email: process.env.SCANNER_EMAIL,
+        password: process.env.SCANNER_PASSWORD,
+        name: 'Scanner Operator',
+        role: 'scanner'
       }
-    ];
+    ].filter((u) => u.email && u.password);
 
     for (const u of usersToSeed) {
       const emailLower = u.email.toLowerCase().trim();

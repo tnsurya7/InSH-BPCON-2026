@@ -335,7 +335,7 @@ export const CATEGORY_COUNTER_KEYS = {
   Exhibitors: 'exhibitor_counter',
 } as const;
 
-export type StaffRole = 'admin' | 'registration' | 'scanner';
+export type StaffRole = 'admin' | 'registration' | 'scanner' | 'staff';
 
 export type DashboardTotals = {
   total_attendees: number;

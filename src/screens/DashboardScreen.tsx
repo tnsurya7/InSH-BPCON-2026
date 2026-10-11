@@ -16,6 +16,8 @@ import {
   ShieldCheck,
   Loader2,
   Hash,
+  Menu,
+  X,
 } from 'lucide-react';
 import AttendeesScreen from '@/screens/AttendeesScreen';
 import SpotRegistrationScreen from '@/screens/SpotRegistrationScreen';
@@ -36,13 +38,13 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'registration', 'scanner'] },
-  { id: 'attendees', label: 'Attendees', icon: Users, roles: ['admin', 'registration'] },
-  { id: 'spot', label: 'Spot Registration', icon: UserPlus, roles: ['admin', 'registration'] },
-  { id: 'import', label: 'Excel Import', icon: FileSpreadsheet, roles: ['admin', 'registration'] },
-  { id: 'badges', label: 'Badges', icon: BadgeCheck, roles: ['admin', 'registration'] },
-  { id: 'scanner', label: 'Scanner', icon: QrCode, roles: ['admin', 'scanner'] },
-  { id: 'reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'registration'] },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'registration', 'scanner', 'staff'] },
+  { id: 'attendees', label: 'Attendees', icon: Users, roles: ['admin', 'registration', 'staff'] },
+  { id: 'spot', label: 'Spot Registration', icon: UserPlus, roles: ['admin', 'registration', 'staff'] },
+  { id: 'import', label: 'Excel Import', icon: FileSpreadsheet, roles: ['admin', 'registration', 'staff'] },
+  { id: 'badges', label: 'Badges', icon: BadgeCheck, roles: ['admin', 'registration', 'staff'] },
+  { id: 'scanner', label: 'Scanner', icon: QrCode, roles: ['admin', 'scanner', 'staff'] },
+  { id: 'reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'registration', 'staff'] },
   { id: 'audit', label: 'Audit Log', icon: ScrollText, roles: ['admin'] },
   { id: 'staff', label: 'Staff Management', icon: ShieldCheck, roles: ['admin'] },
   { id: 'counters', label: 'Registration Numbers', icon: Hash, roles: ['admin'] },
@@ -56,6 +58,7 @@ export default function DashboardScreen() {
   const role = profile?.role ?? 'scanner';
 
   const [activeSection, setActiveSection] = useState('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [totalsLoading, setTotalsLoading] = useState(true);
 
@@ -91,6 +94,7 @@ export default function DashboardScreen() {
   // Refresh totals when returning to dashboard from another section
   const handleSectionChange = (id: string) => {
     setActiveSection(id);
+    setMobileMenuOpen(false);
     if (id === 'dashboard') {
       loadTotals();
     }
@@ -98,9 +102,10 @@ export default function DashboardScreen() {
 
   const roleLabel = {
     admin: 'Administrator',
-    registration: 'Registration',
-    scanner: 'Scanner',
-  }[role];
+    registration: 'Registration Staff',
+    scanner: 'Scanner Operator',
+    staff: 'Conference Staff',
+  }[role] || 'Staff';
 
   const statCards: {
     label: string;
@@ -122,11 +127,23 @@ export default function DashboardScreen() {
   const activeNav = visibleNav.find((n) => n.id === activeSection);
 
   return (
-    <div className="min-h-screen bg-slate-100 flex">
+    <div className="min-h-screen bg-slate-100 flex relative">
+      {/* Mobile Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 z-30 lg:hidden backdrop-blur-xs transition-opacity duration-200"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col min-h-screen fixed lg:sticky top-0 h-screen z-30">
-        <div className="px-5 py-5 border-b border-slate-800">
-          <div className="flex items-center gap-2.5">
+      <aside
+        className={`w-64 bg-slate-900 text-slate-300 flex flex-col min-h-screen fixed lg:sticky top-0 h-screen z-40 transition-transform duration-300 ease-in-out ${
+          mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
+        <div className="px-5 py-5 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-500 to-blue-600 flex items-center justify-center flex-shrink-0">
               <ShieldCheck className="w-5 h-5 text-white" />
             </div>
@@ -137,6 +154,13 @@ export default function DashboardScreen() {
               <p className="text-[11px] text-teal-400 font-medium">Conference Portal</p>
             </div>
           </div>
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="lg:hidden text-slate-400 hover:text-white p-1 rounded-lg transition"
+            aria-label="Close menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
@@ -186,18 +210,35 @@ export default function DashboardScreen() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20">
-          <h1 className="text-lg font-bold text-slate-900">
-            {activeNav?.label ?? 'Dashboard'}
-          </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {activeSection === 'dashboard'
-              ? 'Conference overview with live attendance figures'
-              : activeNav?.label ?? 'Conference management'}
-          </p>
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 sticky top-0 z-20 flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden p-1.5 -ml-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition"
+              aria-label="Open menu"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold text-slate-900 truncate">
+                {activeNav?.label ?? 'Dashboard'}
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 truncate hidden sm:block">
+                {activeSection === 'dashboard'
+                  ? 'Conference overview with live attendance figures'
+                  : activeNav?.label ?? 'Conference management'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200">
+              <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
+              Neon DB
+            </span>
+          </div>
         </header>
 
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className="flex-1 p-3.5 sm:p-6 overflow-y-auto">
           {activeSection === 'dashboard' && (
             <div className="space-y-6">
               <div>
