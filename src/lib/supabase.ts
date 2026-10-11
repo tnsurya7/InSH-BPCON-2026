@@ -2,7 +2,7 @@ function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
     const token = (currentSession as any)?.access_token || localStorage.getItem('sb_session_token');
-    if (token) {
+    if (token && token !== 'mock-token' && token !== 'undefined') {
       headers['Authorization'] = `Bearer ${token}`;
     }
   } catch {}
@@ -248,8 +248,13 @@ const mockAuth = {
         return { data: { session: null }, error: null };
       }
       const data = await response.json();
+      const storedToken = localStorage.getItem('sb_session_token');
+      const token = (data as any)?.token || storedToken || '';
+      if (token) {
+        try { localStorage.setItem('sb_session_token', token); } catch {}
+      }
       currentSession = {
-        access_token: 'mock-token',
+        access_token: token,
         user: data.user
       };
       return { data: { session: currentSession }, error: null };

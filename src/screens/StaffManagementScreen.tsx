@@ -29,7 +29,9 @@ const ROLE_BADGE: Record<StaffRole, string> = {
   scanner: 'bg-slate-100 text-slate-700',
 };
 
-const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/staff-admin`;
+const FUNCTION_URL = (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_URL !== 'undefined')
+  ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/staff-admin`
+  : '/functions/v1/staff-admin';
 
 export default function StaffManagementScreen() {
   const { authState } = useAuth();
