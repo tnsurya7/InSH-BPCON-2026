@@ -45,6 +45,7 @@ export default function ScannerScreen() {
 
   const [mode, setMode] = useState<ScanMode>('check_in');
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -123,6 +124,7 @@ export default function ScannerScreen() {
   const startCamera = useCallback(async () => {
     setCameraError('');
     setResult(null);
+    setCameraStarting(true);
 
     if (html5QrRef.current) {
       try {
@@ -138,16 +140,57 @@ export default function ScannerScreen() {
       const html5Qr = new Html5Qrcode(containerId);
       html5QrRef.current = html5Qr;
 
-      await html5Qr.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText: string) => {
-          processScan(decodedText);
-        },
-        () => {
-          // Per-frame failure — ignore, will retry
-        },
-      );
+      // Responsive qrbox sizing calculation
+      const qrboxCalc = (viewfinderWidth: number, viewfinderHeight: number) => {
+        const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75);
+        const size = Math.max(edge, 160);
+        return { width: size, height: size };
+      };
+
+      const qrConfig = {
+        fps: 10,
+        qrbox: qrboxCalc,
+        aspectRatio: 1.333334,
+      };
+
+      const onScanSuccess = (decodedText: string) => {
+        processScan(decodedText);
+      };
+
+      const onScanFailure = () => {
+        // Per-frame failure — normal while scanning
+      };
+
+      // Try environment (back) camera first; if that fails (e.g. desktop webcam), fallback to user or default camera
+      try {
+        await html5Qr.start(
+          { facingMode: 'environment' },
+          qrConfig,
+          onScanSuccess,
+          onScanFailure,
+        );
+      } catch {
+        // Fallback to front camera or default camera
+        await html5Qr.start(
+          { facingMode: 'user' },
+          qrConfig,
+          onScanSuccess,
+          onScanFailure,
+        );
+      }
+
+      // Check and apply video element styles to ensure it fills the container cleanly
+      const videoEl = document.querySelector(`#${containerId} video`) as HTMLVideoElement | null;
+      if (videoEl) {
+        videoEl.style.width = '100%';
+        videoEl.style.height = '100%';
+        videoEl.style.objectFit = 'cover';
+        videoEl.style.borderRadius = '0.75rem';
+        if (videoEl.paused) {
+          videoEl.play().catch(() => {});
+        }
+      }
+
       setCameraActive(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -157,10 +200,13 @@ export default function ScannerScreen() {
         setCameraError('Unable to start camera. You can use manual lookup instead.');
       }
       setCameraActive(false);
+    } finally {
+      setCameraStarting(false);
     }
   }, [processScan]);
 
   const stopCamera = useCallback(async () => {
+    setCameraStarting(false);
     if (html5QrRef.current) {
       try {
         if (html5QrRef.current.isScanning) {
@@ -415,19 +461,23 @@ export default function ScannerScreen() {
           {cameraActive ? (
             <button
               onClick={stopCamera}
-              className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 font-medium transition-colors"
             >
               <CameraOff className="w-4 h-4" />
-              Stop
+              Stop Camera
             </button>
           ) : (
             <button
               onClick={startCamera}
-              disabled={processing}
-              className="flex items-center gap-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-3 py-1.5 disabled:opacity-50"
+              disabled={processing || cameraStarting}
+              className="flex items-center gap-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-3.5 py-1.5 disabled:opacity-50 transition-colors shadow-sm"
             >
-              <Camera className="w-4 h-4" />
-              Start Camera
+              {cameraStarting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Camera className="w-4 h-4" />
+              )}
+              {cameraStarting ? 'Starting Camera...' : 'Start Camera Scan'}
             </button>
           )}
         </div>
@@ -439,17 +489,31 @@ export default function ScannerScreen() {
           </div>
         )}
 
-        <div className="relative rounded-lg overflow-hidden bg-slate-900 min-h-[220px] flex items-center justify-center">
-          {/* Isolated, empty mount point for Html5Qrcode — no React children allowed inside */}
+        <div className="relative rounded-xl overflow-hidden bg-slate-950 min-h-[300px] flex items-center justify-center border border-slate-800">
+          {/* Isolated mount point for Html5Qrcode — keep clean of React nodes */}
           <div
             id={containerId}
-            className={`w-full ${cameraActive ? 'block' : 'hidden'}`}
+            className="w-full flex items-center justify-center"
           />
 
-          {!cameraActive && !cameraError && (
-            <div className="text-slate-500 text-sm py-12 flex flex-col items-center gap-2">
-              <QrCode className="w-12 h-12 text-slate-600" />
-              <p>Camera is off. Start the camera to scan.</p>
+          {/* Placeholder overlay when camera is not running */}
+          {!cameraActive && !cameraStarting && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 text-sm gap-3 p-6 text-center z-10 pointer-events-none bg-slate-950">
+              <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
+                <QrCode className="w-8 h-8 text-teal-400/80" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold text-slate-200 text-base">Camera Viewfinder is Off</p>
+                <p className="text-xs text-slate-400 max-w-xs">Click &ldquo;Start Camera Scan&rdquo; to activate your device camera and scan attendee QR badges</p>
+              </div>
+            </div>
+          )}
+
+          {/* Loading state when camera is starting */}
+          {cameraStarting && (
+            <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center gap-3 z-10 text-white">
+              <Loader2 className="w-8 h-8 animate-spin text-teal-400" />
+              <p className="text-sm font-medium">Initializing camera stream...</p>
             </div>
           )}
         </div>

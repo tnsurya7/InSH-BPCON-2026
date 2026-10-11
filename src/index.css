@@ -185,3 +185,35 @@
     -webkit-print-color-adjust: exact !important;
   }
 }
+
+/* ── QR Scanner Camera Viewfinder ────────── */
+#qr-scanner-container {
+  width: 100% !important;
+  min-height: 280px;
+  max-width: 520px;
+  margin: 0 auto !important;
+  position: relative !important;
+  overflow: hidden !important;
+  border-radius: 0.75rem !important;
+  background-color: #0f172a;
+}
+
+#qr-scanner-container video {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 260px !important;
+  max-height: 420px !important;
+  object-fit: cover !important;
+  border-radius: 0.75rem !important;
+  display: block !important;
+  margin: 0 auto !important;
+}
+
+#qr-scanner-container canvas {
+  max-width: 100% !important;
+}
+
+#qr-scanner-container img[alt="Info icon"] {
+  display: none !important;
+}
+
