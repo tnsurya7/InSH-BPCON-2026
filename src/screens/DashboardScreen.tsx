@@ -214,7 +214,7 @@ export default function DashboardScreen() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 sticky top-0 z-20 flex items-center justify-between">
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 sm:py-3 sticky top-0 z-20 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -234,7 +234,13 @@ export default function DashboardScreen() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 sm:gap-4 flex-shrink-0">
+            <img
+              src="/MS Registration Logo Mark.png"
+              alt="MS Registration Logo Mark"
+              className="h-12 sm:h-14 md:h-16 w-auto object-contain max-w-[180px] sm:max-w-[260px] md:max-w-[320px]"
+            />
+            <div className="h-7 w-px bg-slate-200 hidden sm:block" />
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200">
               <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
               Neon DB
