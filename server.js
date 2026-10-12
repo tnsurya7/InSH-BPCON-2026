@@ -543,7 +543,13 @@ app.post('/api/query', async (req, res) => {
       const keys = Object.keys(data);
       const values = Object.values(data);
       const sets = keys.map((k, i) => `${k} = $${params.length + i + 1}`);
-      params.push(...values);
+      const serializedValues = values.map((val) => {
+        if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+          return JSON.stringify(val);
+        }
+        return val;
+      });
+      params.push(...serializedValues);
       sql = `UPDATE ${table} SET ${sets.join(', ')}`;
     } else if (method === 'upsert') {
       const isArray = Array.isArray(data);
@@ -706,7 +712,11 @@ app.post('/api/rpc', async (req, res) => {
       const keys = Object.keys(args);
       const values = Object.values(args);
       const placeHolders = keys.map((k, i) => {
-        params.push(values[i]);
+        let val = values[i];
+        if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+          val = JSON.stringify(val);
+        }
+        params.push(val);
         return `${k} => $${params.length}`;
       });
       sql = `SELECT * FROM ${name}(${placeHolders.join(', ')})`;

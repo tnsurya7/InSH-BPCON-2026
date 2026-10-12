@@ -319,7 +319,7 @@ export default function ExcelImportScreen() {
       );
 
       if (rpcError) {
-        const msg = rpcError.message;
+        const msg = rpcError.message || '';
         if (msg.includes('Permission denied')) {
           setError('You do not have permission to import attendees.');
         } else if (msg.includes('duplicate key')) {
@@ -328,7 +328,9 @@ export default function ExcelImportScreen() {
           );
         } else {
           setError(
-            'Import failed. Please verify your file data and try again.',
+            msg
+              ? `Import failed: ${msg}`
+              : 'Import failed. Please verify your file data and try again.',
           );
         }
         importIdRef.current = null;

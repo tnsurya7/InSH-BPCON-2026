@@ -870,6 +870,7 @@ BEGIN
     INSERT INTO public.attendees (
       registration_number, name, category, phone_number, email, gender,
       food_preference, payment_status, registration_type,
+      medical_council_number,
       import_batch_id, attendance_status, created_by
     )
     VALUES (
@@ -882,6 +883,7 @@ BEGIN
       COALESCE(v_row->>'food_preference', 'Not Specified'),
       COALESCE(v_row->>'payment_status', 'Paid'),
       'pre_registered',
+      NULLIF(v_row->>'medical_council_number', ''),
       v_batch_id,
       'not_checked_in',
       auth.uid()

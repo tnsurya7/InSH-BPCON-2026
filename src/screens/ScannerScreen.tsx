@@ -348,9 +348,11 @@ export default function ScannerScreen() {
       if (html5QrRef.current) {
         try {
           if (html5QrRef.current.isScanning) {
-            html5QrRef.current.stop().then(() => html5QrRef.current?.clear()).catch(() => {});
+            html5QrRef.current.stop().then(() => {
+              try { html5QrRef.current?.clear(); } catch {}
+            }).catch(() => {});
           } else {
-            html5QrRef.current.clear().catch(() => {});
+            try { html5QrRef.current.clear(); } catch {}
           }
         } catch {}
       }

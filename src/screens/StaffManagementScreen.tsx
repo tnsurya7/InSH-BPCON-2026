@@ -27,6 +27,7 @@ const ROLE_BADGE: Record<StaffRole, string> = {
   admin: 'bg-teal-100 text-teal-800',
   registration: 'bg-blue-100 text-blue-800',
   scanner: 'bg-slate-100 text-slate-700',
+  staff: 'bg-emerald-100 text-emerald-800',
 };
 
 const FUNCTION_URL = (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_URL !== 'undefined')
