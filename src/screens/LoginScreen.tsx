@@ -40,8 +40,12 @@ export default function LoginScreen() {
       <div className="w-full max-w-md">
         {/* Brand header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-blue-600 shadow-lg shadow-teal-500/20 mb-4">
-            <ShieldCheck className="w-8 h-8 text-white" strokeWidth={2} />
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/5 border border-white/10 p-2.5 shadow-xl shadow-teal-500/10 mb-4 backdrop-blur-sm">
+            <img
+              src="/msfav.png"
+              alt="MS Registrations Logo"
+              className="w-full h-full object-contain rounded-xl"
+            />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             MS Registrations

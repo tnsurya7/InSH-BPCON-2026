@@ -11,8 +11,12 @@ function AppShell() {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center">
         <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-teal-400 via-cyan-500 to-blue-600" />
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-blue-600 shadow-lg shadow-teal-500/20 mb-4">
-          <ShieldCheck className="w-8 h-8 text-white" />
+        <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/5 border border-white/10 p-2.5 shadow-xl mb-4 backdrop-blur-sm">
+          <img
+            src="/msfav.png"
+            alt="MS Registrations Logo"
+            className="w-full h-full object-contain rounded-xl"
+          />
         </div>
         <div className="flex items-center gap-2 text-slate-300 text-sm">
           <Loader2 className="w-4 h-4 animate-spin" />

@@ -144,8 +144,12 @@ export default function DashboardScreen() {
       >
         <div className="px-5 py-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-500 to-blue-600 flex items-center justify-center flex-shrink-0">
-              <ShieldCheck className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 p-1 flex items-center justify-center flex-shrink-0 shadow-sm">
+              <img
+                src="/msfav.png"
+                alt="MS Registrations Logo"
+                className="w-full h-full object-contain rounded-lg"
+              />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-white truncate">

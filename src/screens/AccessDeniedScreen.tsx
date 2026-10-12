@@ -57,8 +57,8 @@ export default function AccessDeniedScreen() {
         </div>
 
         <div className="text-center mt-6">
-          <div className="inline-flex items-center gap-1.5 text-slate-500 text-xs">
-            <ShieldCheck className="w-3.5 h-3.5" />
+          <div className="inline-flex items-center gap-2 text-slate-500 text-xs">
+            <img src="/msfav.png" alt="Logo" className="w-4 h-4 object-contain rounded" />
             MS Registrations
           </div>
         </div>
