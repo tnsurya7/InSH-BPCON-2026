@@ -91,12 +91,7 @@ export default function SpotStickerBadge({
           position: 'relative',
         }}
       >
-        {/* Spot background image */}
-        <img
-          src="/Spot_Empty_sample.png"
-          alt=""
-          className="badge-background"
-        />
+        {/* Plain white background — no border frame image */}
 
         {/* Top: Registration Number */}
         <div
@@ -175,10 +170,7 @@ export default function SpotStickerBadge({
         height: `${heightPx * previewScale}px`,
         overflow: 'hidden',
         position: 'relative',
-        boxShadow: '0 4px 14px rgba(0, 0, 0, 0.12)',
-        borderRadius: '8px',
         backgroundColor: '#ffffff',
-        border: '1px solid #cbd5e1',
         margin: '0 auto',
       }}
     >
