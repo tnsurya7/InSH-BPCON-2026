@@ -365,6 +365,7 @@ export default function ReportsScreen() {
                   {isAdmin && <th className="px-4 py-3 font-semibold text-slate-700">Phone</th>}
                   {isAdmin && <th className="px-4 py-3 font-semibold text-slate-700">Email</th>}
                   {isAdmin && <th className="px-4 py-3 font-semibold text-slate-700">Gender</th>}
+                  <th className="px-4 py-3 font-semibold text-slate-700">Medical Council No.</th>
                   <th className="px-4 py-3 font-semibold text-slate-700">Food</th>
                   <th className="px-4 py-3 font-semibold text-slate-700">Payment</th>
                   <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
@@ -375,7 +376,7 @@ export default function ReportsScreen() {
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={isAdmin ? 11 : 8} className="px-4 py-12 text-center">
+                    <td colSpan={isAdmin ? 12 : 9} className="px-4 py-12 text-center">
                       <div className="flex items-center justify-center gap-2 text-slate-500">
                         <Loader2 className="w-4 h-4 animate-spin" /> Loading…
                       </div>
@@ -383,7 +384,7 @@ export default function ReportsScreen() {
                   </tr>
                 ) : attendees.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 11 : 8} className="px-4 py-12 text-center text-slate-500">
+                    <td colSpan={isAdmin ? 12 : 9} className="px-4 py-12 text-center text-slate-500">
                       No attendees match the current filters.
                     </td>
                   </tr>
@@ -396,6 +397,7 @@ export default function ReportsScreen() {
                       {isAdmin && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.phone_number ?? '—'}</td>}
                       {isAdmin && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.email ?? '—'}</td>}
                       {isAdmin && <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.gender ?? '—'}</td>}
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-mono text-xs">{a.medical_council_number || '—'}</td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.food_preference}</td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.payment_status}</td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{a.registration_type === 'spot' ? 'Spot' : 'Pre'}</td>

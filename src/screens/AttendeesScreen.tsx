@@ -403,7 +403,7 @@ export default function AttendeesScreen() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search name, registration number, phone or email…"
+            placeholder="Search name, registration number, phone, email, medical council no…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition"
@@ -592,6 +592,9 @@ export default function AttendeesScreen() {
                   Gender
                 </th>
                 <th className="px-4 py-3 font-semibold text-slate-700">
+                  Medical Council No.
+                </th>
+                <th className="px-4 py-3 font-semibold text-slate-700">
                   Food
                 </th>
                 <th className="px-4 py-3 font-semibold text-slate-700">
@@ -614,7 +617,7 @@ export default function AttendeesScreen() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={canManage ? 13 : 12} className="px-4 py-12 text-center">
+                  <td colSpan={canManage ? 14 : 13} className="px-4 py-12 text-center">
                     <div className="flex items-center justify-center gap-2 text-slate-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Loading attendees…
@@ -623,7 +626,7 @@ export default function AttendeesScreen() {
                 </tr>
               ) : attendees.length === 0 ? (
                 <tr>
-                  <td colSpan={canManage ? 13 : 12} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={canManage ? 14 : 13} className="px-4 py-12 text-center text-slate-500">
                     No attendees found.
                   </td>
                 </tr>
@@ -666,6 +669,9 @@ export default function AttendeesScreen() {
                       </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                         {a.gender ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-mono text-xs">
+                        {a.medical_council_number || '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                         {a.food_preference}

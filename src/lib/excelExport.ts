@@ -8,6 +8,7 @@ type ExportRow = {
   'Phone Number': string;
   Email: string;
   Gender: string;
+  'Medical Council Number': string;
   'Food Preference': string;
   'Payment Status': string;
   'Registration Type': string;
@@ -27,6 +28,7 @@ export function exportAttendeesToExcel(
     'Phone Number': includeSensitive ? (a.phone_number ?? '') : '',
     Email: includeSensitive ? (a.email ?? '') : '',
     Gender: includeSensitive ? (a.gender ?? '') : '',
+    'Medical Council Number': a.medical_council_number ?? '',
     'Food Preference': a.food_preference,
     'Payment Status': a.payment_status,
     'Registration Type':
@@ -42,7 +44,8 @@ export function exportAttendeesToExcel(
     { wch: 18 },
     { wch: 16 },
     { wch: 28 },
-    { wch: 18 },
+    { wch: 14 },
+    { wch: 22 },
     { wch: 16 },
     { wch: 16 },
     { wch: 16 },
