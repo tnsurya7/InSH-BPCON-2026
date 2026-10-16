@@ -663,7 +663,12 @@ export default function BadgesScreen() {
             <p className="text-sm text-slate-600">
               You are about to print{' '}
               <span className="font-semibold">{bulkModal.attendees.length}</span>{' '}
-              badges. Each badge will print on a separate page.
+              badges. This will use approximately{' '}
+              <span className="font-semibold">
+                {Math.ceil(bulkModal.attendees.length / badgesPerSheet)}
+              </span>{' '}
+              sheet{Math.ceil(bulkModal.attendees.length / badgesPerSheet) === 1 ? '' : 's'}{' '}
+              ({badgesPerSheet} badge{badgesPerSheet === 1 ? '' : 's'} per {pageSize.preset === 'custom' ? 'sheet' : pageSize.preset}).
             </p>
             {bulkModal.attendees.length > 50 && (
               <div className="flex items-start gap-2.5 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
@@ -781,14 +786,14 @@ export default function BadgesScreen() {
         <div ref={printRootRef} id="badge-print-root">
           <style>{`
             @page {
-              size: ${pageSize.width_mm}mm ${pageSize.height_mm}mm;
+              size: ${pageSize.preset === 'A3' ? 'A3 landscape' : pageSize.preset === 'A4' || pageSize.preset === 'A6' ? 'A4 portrait' : `${pageSize.width_mm}mm ${pageSize.height_mm}mm`};
               margin: 0;
             }
           `}</style>
           {chunkArray(printQueue?.attendees ?? [], badgesPerSheet).map((sheetAttendees, sheetIdx) => (
             <div
               key={sheetIdx}
-              className="a4-print-sheet"
+              className="badge-print-sheet a4-print-sheet"
               style={{
                 width: `${pageSize.width_mm}mm`,
                 height: `${pageSize.height_mm}mm`,

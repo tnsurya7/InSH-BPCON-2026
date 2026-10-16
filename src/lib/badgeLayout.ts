@@ -36,11 +36,11 @@ export const PRESET_PAGE_SIZES: Record<'A4' | 'A3' | 'A6', PageSizeConfig> = {
   },
   A3: {
     preset: 'A3',
-    name: 'A3 Sheet (8 Badges • 2×4)',
-    width_mm: 297,
-    height_mm: 420,
-    columns: 2,
-    rows: 4,
+    name: 'A3 Sheet (8 Badges • 4×2 Landscape)',
+    width_mm: 420,
+    height_mm: 297,
+    columns: 4,
+    rows: 2,
     badge_width_mm: 105,
     badge_height_mm: 148.5,
   },
@@ -167,7 +167,7 @@ function coercePageSize(raw: unknown): PageSizeConfig {
     return PRESET_PAGE_SIZES[preset];
   }
 
-  const columns = Math.max(1, Math.min(6, Math.floor(num(p.columns, 2))));
+  const columns = Math.max(1, Math.min(8, Math.floor(num(p.columns, 2))));
   const rows = Math.max(1, Math.min(8, Math.floor(num(p.rows, 2))));
   const sheetW = num(p.width_mm, 210);
   const sheetH = num(p.height_mm, 297);

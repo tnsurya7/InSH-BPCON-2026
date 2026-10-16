@@ -4,15 +4,10 @@
 
 /* ── Badge printing styles ────────── */
 
-/* Each A4 sheet holds up to 4 A6 badges arranged in a 2x2 grid */
+/* Multi-badge print sheet (A4, A3, or custom) */
+.badge-print-sheet,
 .a4-print-sheet {
   display: grid;
-  grid-template-columns: 105mm 105mm;
-  grid-template-rows: 148.5mm 148.5mm;
-  width: 210mm;
-  height: 297mm;
-  max-width: 210mm;
-  max-height: 297mm;
   box-sizing: border-box;
   margin: 0 auto;
   padding: 0;
@@ -22,6 +17,7 @@
   break-after: page;
 }
 
+.badge-print-sheet:last-child,
 .a4-print-sheet:last-child {
   page-break-after: auto;
   break-after: auto;
@@ -39,7 +35,8 @@
   break-inside: avoid;
 }
 
-/* Subtle cut guideline on A4 sheets */
+/* Subtle cut guideline on multi-badge sheets (A4, A3, etc.) */
+.badge-print-sheet .badge-page,
 .a4-print-sheet .badge-page {
   outline: 0.5px dashed rgba(200, 200, 200, 0.7);
   outline-offset: -0.5px;
@@ -130,6 +127,7 @@
     padding: 0 !important;
   }
 
+  .badge-print-sheet,
   .a4-print-sheet {
     display: grid !important;
     margin: 0 !important;
@@ -140,6 +138,7 @@
     box-sizing: border-box !important;
   }
 
+  .badge-print-sheet:last-child,
   .a4-print-sheet:last-child {
     page-break-after: auto !important;
     break-after: auto !important;

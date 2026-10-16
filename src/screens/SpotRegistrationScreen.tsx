@@ -270,7 +270,7 @@ export default function SpotRegistrationScreen() {
     root.render(
       reactEl.createElement(() => (
         <div
-          className="a4-print-sheet"
+          className="badge-print-sheet a4-print-sheet"
           style={{
             width: `${activePage.width_mm}mm`,
             height: `${activePage.height_mm}mm`,
@@ -287,7 +287,7 @@ export default function SpotRegistrationScreen() {
         >
           <style>{`
             @page {
-              size: ${activePage.width_mm}mm ${activePage.height_mm}mm;
+              size: ${activePage.preset === 'A3' ? 'A3 landscape' : activePage.preset === 'A4' || activePage.preset === 'A6' ? 'A4 portrait' : `${activePage.width_mm}mm ${activePage.height_mm}mm`};
               margin: 0;
             }
           `}</style>

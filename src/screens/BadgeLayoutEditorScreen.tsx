@@ -166,6 +166,7 @@ export default function BadgeLayoutEditorScreen() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [testName, setTestName] = useState<'short' | 'long'>('short');
+  const [previewMode, setPreviewMode] = useState<'single' | 'sheet'>('single');
   const [activeTab, setActiveTab] = useState<'standard' | 'spot_sticker'>('standard');
 
   const fetchLayout = useCallback(async () => {
@@ -381,6 +382,21 @@ export default function BadgeLayoutEditorScreen() {
       testName === 'short' ? SHORT_NAME : LONG_NAME,
     );
     const activePage = layout.pageSize ?? DEFAULT_PAGE_SIZE_CONFIG;
+    const count = (activePage.columns || 1) * (activePage.rows || 1);
+    const testAttendees = Array.from({ length: count }, (_, i) => ({
+      ...attendee,
+      id: `test-${i + 1}`,
+      registration_number: `PMCON-${2001 + i}`,
+      qr_token: `PMCON-${2001 + i}-test-token`,
+      name:
+        i % 2 === 0
+          ? testName === 'short'
+            ? SHORT_NAME
+            : LONG_NAME
+          : testName === 'short'
+          ? LONG_NAME
+          : SHORT_NAME,
+    }));
 
     // Reuse the same Badge component for printing
     const container = document.createElement('div');
@@ -392,7 +408,7 @@ export default function BadgeLayoutEditorScreen() {
     root.render(
       reactEl.createElement(() => (
         <div
-          className="a4-print-sheet"
+          className="badge-print-sheet a4-print-sheet"
           style={{
             width: `${activePage.width_mm}mm`,
             height: `${activePage.height_mm}mm`,
@@ -409,11 +425,13 @@ export default function BadgeLayoutEditorScreen() {
         >
           <style>{`
             @page {
-              size: ${activePage.width_mm}mm ${activePage.height_mm}mm;
+              size: ${activePage.preset === 'A3' ? 'A3 landscape' : activePage.preset === 'A4' || activePage.preset === 'A6' ? 'A4 portrait' : `${activePage.width_mm}mm ${activePage.height_mm}mm`};
               margin: 0;
             }
           `}</style>
-          {attendee && <Badge attendee={attendee} layout={layout} />}
+          {testAttendees.map((a) => (
+            <Badge key={a.id} attendee={a} layout={layout} />
+          ))}
         </div>
       )),
     );
@@ -572,9 +590,9 @@ export default function BadgeLayoutEditorScreen() {
             }`}
           >
             <div className="font-bold text-sm text-slate-900">A3 Sheet</div>
-            <div className="text-xs text-slate-500 mt-0.5">297 × 420 mm</div>
+            <div className="text-xs text-slate-500 mt-0.5">420 × 297 mm (Landscape)</div>
             <div className="text-xs text-teal-700 font-semibold mt-1.5 flex items-center gap-1">
-              <span>8 Badges (2×4)</span>
+              <span>8 Badges (4×2 Grid)</span>
             </div>
           </button>
 
@@ -702,14 +720,93 @@ export default function BadgeLayoutEditorScreen() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Live preview */}
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-slate-800">
-            Live Preview (Badge • {activePage.badge_width_mm || 105}×{activePage.badge_height_mm || 148.5} mm)
-          </h3>
-          <div className="bg-slate-100 rounded-xl border border-slate-200 p-4 flex justify-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-800">
+              Live Preview {previewMode === 'sheet' ? `(Sheet • ${badgesPerSheet} Badges • ${activePage.columns}×${activePage.rows})` : `(Badge • ${activePage.badge_width_mm || 105}×${activePage.badge_height_mm || 148.5} mm)`}
+            </h3>
+            <div className="flex items-center gap-1 bg-slate-200 p-0.5 rounded-lg text-xs font-medium self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setPreviewMode('single')}
+                className={`px-2.5 py-1 rounded transition ${
+                  previewMode === 'single'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Single Badge
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('sheet')}
+                className={`px-2.5 py-1 rounded transition ${
+                  previewMode === 'sheet'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Full Sheet ({badgesPerSheet})
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-slate-100 rounded-xl border border-slate-200 p-4 flex flex-col items-center justify-center min-h-[380px]">
             {loading ? (
               <div className="flex items-center gap-2 text-slate-500 text-sm py-20">
                 <Loader2 className="w-4 h-4 animate-spin" /> Loading…
               </div>
+            ) : previewMode === 'sheet' ? (
+              (() => {
+                const sheetW_px = activePage.width_mm * (96 / 25.4);
+                const sheetH_px = activePage.height_mm * (96 / 25.4);
+                const scale = Math.min(480 / sheetW_px, 350 / sheetH_px, 0.45);
+                return (
+                  <div className="space-y-2 flex flex-col items-center">
+                    <div
+                      style={{
+                        width: `${sheetW_px * scale}px`,
+                        height: `${sheetH_px * scale}px`,
+                        overflow: 'hidden',
+                        position: 'relative',
+                        boxShadow: '0 6px 18px rgba(0, 0, 0, 0.12)',
+                        borderRadius: '6px',
+                        backgroundColor: '#fff',
+                        border: '1px solid #cbd5e1',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${activePage.width_mm}mm`,
+                          height: `${activePage.height_mm}mm`,
+                          display: 'grid',
+                          gridTemplateColumns: `repeat(${activePage.columns}, ${activePage.badge_width_mm || 105}mm)`,
+                          gridTemplateRows: `repeat(${activePage.rows}, ${activePage.badge_height_mm || 148.5}mm)`,
+                          transform: `scale(${scale})`,
+                          transformOrigin: 'top left',
+                        }}
+                        className="badge-print-sheet a4-print-sheet"
+                      >
+                        {Array.from({ length: badgesPerSheet }, (_, i) => (
+                          <Badge
+                            key={i}
+                            attendee={{
+                              ...testAttendee,
+                              id: `sheet-test-${i + 1}`,
+                              registration_number: `PMCON-${2001 + i}`,
+                              qr_token: `PMCON-${2001 + i}-test-token`,
+                              name: i % 2 === 0 ? SHORT_NAME : LONG_NAME,
+                            }}
+                            layout={layout}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      Sheet: {activePage.width_mm} × {activePage.height_mm} mm • {badgesPerSheet} badges ({activePage.columns} across × {activePage.rows} down)
+                    </span>
+                  </div>
+                );
+              })()
             ) : (
               <div className="shadow-lg rounded overflow-hidden">
                 <Badge attendee={testAttendee} layout={layout} preview />
